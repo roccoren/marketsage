@@ -7,11 +7,11 @@ class MACDStrategy(Strategy):
     def __init__(self, params: Optional[Dict] = None):
         super().__init__(name="MACD")
         self.params = params or {
-            'fast_period': 12,
-            'slow_period': 26,
-            'signal_period': 9,
+            'fast_period': 12,  # Common MACD fast period
+            'slow_period': 26,  # Common MACD slow period
+            'signal_period': 9,  # Common MACD signal period
             'volume_ma_period': 5,
-            'volume_threshold': 1.05  # 5% above average
+            'volume_threshold': 1.01  # 1% above average
         }
 
     def calculate_macd(self, data: pd.DataFrame) -> pd.DataFrame:

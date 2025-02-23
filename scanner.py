@@ -5,6 +5,7 @@ import time
 import pytz
 from datetime import datetime, timedelta, time as dt_time
 import yfinance as yf
+from utils.yfinance_utils import get_cached_session
 from pathlib import Path
 import json
 import asyncio
@@ -167,7 +168,8 @@ class StockScanner:
             return proposed_trading_day
             
         try:
-            spy = yf.Ticker("SPY")
+            session = get_cached_session()
+            spy = yf.Ticker("SPY", session=session)
             end_date = proposed_trading_day.astimezone(pytz.UTC).strftime('%Y-%m-%d')
             df = spy.history(period="5d", end=end_date)
             
@@ -208,7 +210,8 @@ class StockScanner:
             return proposed_trading_day
 
         try:
-            ticker = yf.Ticker("STW.AX")
+            session = get_cached_session()
+            ticker = yf.Ticker("STW.AX", session=session)
             end_timestamp = int(proposed_trading_day.timestamp())
             df = ticker.history(period="5d", end=end_timestamp)
             if df.empty:

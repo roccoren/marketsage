@@ -23,20 +23,20 @@ class ScannerConfig:
         
         if not self.data_directory:
             raise ValueError("Data directory not specified")
-            
+        
         if not self.output_directory:
             raise ValueError("Output directory not specified")
-            
+        
         if not self.log_directory:
             raise ValueError("Log directory not specified")
-            
+        
         yahoo_finance = self.providers.get('yahooFinance', {})
         if not yahoo_finance.get('rateLimit'):
             raise ValueError("Yahoo Finance rate limit not specified")
-            
+        
         if not yahoo_finance.get('batchSize'):
             raise ValueError("Yahoo Finance batch size not specified")
-            
+        
         # Validate LongPort if configured
         long_port = self.providers.get('longPort', {})
         if long_port.get('apiKey'):
@@ -116,10 +116,10 @@ async def main():
         update_config_for_exchange(config, market)
         
         # Initialize scanner with config and strategy
-        from strategies import MACDStrategy
+        from strategies import PriceCrossoverStrategy
         scanner = StockScanner(config)
-        macd_strategy = MACDStrategy()
-        scanner.register_strategy(macd_strategy)
+        crossover_strategy = PriceCrossoverStrategy()
+        scanner.register_strategy(crossover_strategy)
 
         logger.info('Scanner initialized with configuration and strategy.')  # Added logging statement
 

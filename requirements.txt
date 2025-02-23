@@ -5,3 +5,5 @@ yfinance>=0.2.35
 aiohttp>=3.9.0
 asyncio>=3.4.3
 aiofiles>=23.2.1
+requests-cache>=1.1.0
+schedule>=1.2.0
