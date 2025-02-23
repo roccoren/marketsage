@@ -2,3 +2,6 @@ pandas>=2.0.0
 numpy>=1.24.0
 pytz>=2023.3
 yfinance>=0.2.35
+aiohttp>=3.9.0
+asyncio>=3.4.3
+aiofiles>=23.2.1

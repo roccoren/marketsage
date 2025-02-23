@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+import asyncio
 from pathlib import Path
 from typing import Dict
 
@@ -64,7 +65,7 @@ def update_config_for_exchange(config: ScannerConfig, market: str) -> None:
     config.exchanges = [exchange for exchange in config.exchanges 
                        if exchange['name'] == market]
 
-def main():
+async def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Stock Market Scanner')
     parser.add_argument('--config', default='config.json',
@@ -78,12 +79,12 @@ def main():
     try:
         # Configure logging
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         # Create a file handler for logging
         file_handler = logging.FileHandler('logs/scanner.log')
-        file_handler.setLevel(logging.INFO)
+        file_handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         
@@ -93,15 +94,14 @@ def main():
         logger.info('Starting the main function execution...')  # Added logging statement
         print('Starting the main function execution...')  # Added print statement
 
-        # Initialize scanner to validate market
-        from scanner import StockScanner
-        scanner = StockScanner(None)  # Temporary instance for validation
-        
         # Validate market argument
+        from scanner import StockScanner
         market = args.market.upper()
+        scanner = StockScanner(None)  # Temporary instance for validation
         if not scanner.validate_exchange(market):
             logger.error(f"Error: Invalid market '{market}'. Valid markets are: {', '.join(scanner.VALID_EXCHANGES)}")
             sys.exit(1)
+        del scanner  # Clean up temporary instance
 
         # Load configuration
         config = load_config(args.config)
@@ -126,12 +126,12 @@ def main():
         # Update stock data if requested
         if args.update:
             logger.info('Stock data update requested.')  # Added logging statement
-            scanner.update_stock_data()
+            await scanner.update_stock_data()
             logger.info("Stock data update completed")
 
         # Run scanner
         logger.info(f"Starting market scan for {market}...")
-        scanner.scan()
+        await scanner.scan()
         logger.info("Scan completed successfully")
 
     except Exception as e:
@@ -139,4 +139,4 @@ def main():
         sys.exit(1)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

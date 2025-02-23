@@ -1,25 +1,113 @@
-# Plan for Running the Stock Scanner Program and Resolving Issues
+# Stock Data Update Optimization Plan
 
-## Step 1: Verify Configuration
-- **Action**: Check the `config.json` file to ensure it is correctly formatted and contains all necessary parameters as required by the `ScannerConfig` class in `main.py`.
-- **Expected Outcome**: Confirmation that the configuration is valid and complete.
+## Current Implementation Analysis
+- Stocks are processed sequentially with a 2-second delay between requests
+- Rate limit is set to 2000ms in config
+- Basic retry logic with exponential backoff is implemented
+- Unused batchSize parameter exists in config
 
-## Step 2: Check Directory Structure
-- **Action**: Verify that the required directories (`data`, `output`, `logs`) exist and are accessible.
-- **Expected Outcome**: All directories are present and accessible.
+## Proposed Improvements
 
-## Step 3: Run the Program
-- **Action**: Execute the program using the command `python3 main.py`.
-- **Expected Outcome**: The program runs without errors, or errors are logged for further analysis.
+### 1. Parallel Processing Implementation
+- Implement concurrent processing using Python's `asyncio` and `aiohttp`
+- Create a semaphore-based rate limiter to respect Yahoo Finance API limits
+- Process multiple exchanges concurrently
+- Within each exchange, process multiple stocks concurrently
 
-## Step 4: Analyze Errors
-- **Action**: If errors occur, review the error messages and logs to identify the root cause.
-- **Expected Outcome**: Understanding of any issues that prevented the program from running successfully.
+### 2. Rate Limiting Strategy
+- Maintain the 2000ms (2 seconds) between requests per worker
+- Implement a token bucket rate limiter to manage concurrent requests
+- Use semaphores to control the number of concurrent connections
+- Keep track of request timestamps to ensure compliance with rate limits
 
-## Step 5: Resolve Issues
-- **Action**: Based on the analysis, propose and implement solutions to resolve identified issues.
-- **Expected Outcome**: The program runs successfully after implementing the solutions.
+### 3. Batch Processing Enhancement
+- Utilize the existing batchSize parameter from config
+- Create worker pools with size based on batchSize
+- Implement queue-based task distribution for better resource management
 
-## Next Steps
-- Review this plan and provide feedback or approval.
-- If approved, switch to `code` mode to implement the solution.
+### 4. Error Handling and Resilience
+- Maintain existing retry logic with exponential backoff
+- Add circuit breaker pattern for API failure protection
+- Implement request timeout handling
+- Add bulk operation resumption capability
+
+### 5. Progress Tracking
+- Add progress indicators for each exchange
+- Implement logging for concurrent operations
+- Track successful/failed updates separately
+- Add timestamp-based progress persistence
+
+## Implementation Steps
+
+1. **Refactor Network Layer**
+   - Create async HTTP client wrapper
+   - Implement rate limiter class
+   - Add connection pooling
+
+2. **Update Core Processing**
+   - Convert update_stock_data method to async
+   - Implement parallel processing logic
+   - Add task queue management
+
+3. **Enhance Error Handling**
+   - Implement circuit breaker
+   - Add comprehensive error tracking
+   - Update retry logic for concurrent operations
+
+4. **Progress Monitoring**
+   - Add progress tracking mechanism
+   - Implement logging enhancements
+   - Create recovery checkpoint system
+
+5. **Configuration Updates**
+   - Add concurrent processing parameters
+   - Configure timeout settings
+   - Add circuit breaker thresholds
+
+## Expected Benefits
+
+1. **Performance Improvements**
+   - Reduced total update time through parallel processing
+   - More efficient use of available resources
+   - Better handling of network latency
+
+2. **Reliability Enhancements**
+   - Improved error handling
+   - Better recovery from failures
+   - More detailed progress tracking
+
+3. **Resource Optimization**
+   - Controlled resource usage
+   - Better rate limit compliance
+   - Optimized network utilization
+
+## Technical Considerations
+
+1. **Rate Limit Compliance**
+   - Ensure parallel requests don't exceed API limits
+   - Implement proper request spacing
+   - Monitor rate limit headers
+
+2. **Memory Management**
+   - Control concurrent connection pool size
+   - Implement proper resource cleanup
+   - Monitor memory usage
+
+3. **Error Recovery**
+   - Implement proper cleanup on failures
+   - Add partial update recovery
+   - Maintain data consistency
+
+## Risks and Mitigations
+
+1. **Rate Limit Violations**
+   - Risk: Parallel requests might exceed API limits
+   - Mitigation: Implement strict rate limiting and monitoring
+
+2. **Resource Exhaustion**
+   - Risk: Too many concurrent connections
+   - Mitigation: Implement proper pooling and limiting
+
+3. **Data Consistency**
+   - Risk: Parallel updates might cause inconsistencies
+   - Mitigation: Implement proper locking and transaction handling
