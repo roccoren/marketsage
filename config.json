@@ -15,8 +15,8 @@
     ],
     "providers": {
         "yahooFinance": {
-            "rateLimit": 2000,
-            "batchSize": 100
+            "rateLimit": 10000,
+            "batchSize": 3
         }
     },
     "dataDirectory": "data",

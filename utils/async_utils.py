@@ -53,7 +53,7 @@ class YahooFinanceClient:
             rate_limit_ms: Rate limit in milliseconds between requests
             batch_size: Maximum number of concurrent requests
         """
-        self.rate_limiter = TokenBucket(max(rate_limit_ms, 5000), 1)  # Minimum 5 second delay
+        self.rate_limiter = TokenBucket(max(rate_limit_ms, 10000), 3)  # Minimum 10 second delay with burst capacity of 3
         self.batch_size = batch_size
         self.session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()

@@ -334,7 +334,7 @@ class StockScanner:
             raise ValueError("Scanner not properly initialized with configuration")
 
         rate_limit = self.yahoo_config.get('rateLimit', 2000)
-        batch_size = self.yahoo_config.get('batchSize', 5)
+        batch_size = min(self.yahoo_config.get('batchSize', 3), 3)  # Cap batch size at 3
         
         await self.progress_tracker.load_progress()
         
@@ -378,6 +378,7 @@ class StockScanner:
                     
                     if len(exchange_tasks) >= batch_size:
                         # Wait for the batch to complete
+                        await asyncio.sleep(2)  # Add delay between batches
                         results = await asyncio.gather(*exchange_tasks, return_exceptions=True)
                         completed_symbols += len(exchange_tasks)
                         
@@ -390,7 +391,12 @@ class StockScanner:
                         
                         # Record any failures
                         for symbol, result in zip(exchange_data['Symbol'].iloc[completed_symbols-len(exchange_tasks):completed_symbols], results):
-                            if isinstance(result, Exception) or result is False:
+                            if isinstance(result, Exception):
+                                logger.error(f"Error processing {symbol}: {str(result)}")
+                                if "Too Many Requests" in str(result):
+                                    await asyncio.sleep(30)  # Additional backoff for rate limits
+                                await self.progress_tracker.add_failed_symbol(exchange_name, symbol)
+                            elif result is False:
                                 await self.progress_tracker.add_failed_symbol(exchange_name, symbol)
                         
                         exchange_tasks = []

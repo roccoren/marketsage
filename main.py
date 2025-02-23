@@ -77,19 +77,26 @@ async def main():
     args = parser.parse_args()
 
     try:
-        # Configure logging
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        # Create a file handler for logging
-        file_handler = logging.FileHandler('logs/scanner.log')
-        file_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
+        # Configure root logger for all modules
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
         
+        # Clear any existing handlers
+        root_logger.handlers = []
+        
+        # Create formatter for consistent output
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        
+        # Create and configure stdout handler
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setFormatter(formatter)
+        stdout_handler.setLevel(logging.DEBUG)
+        root_logger.addHandler(stdout_handler)
+        
+        # Initialize our module's logger
         logger = logging.getLogger('StockScanner')
-        logger.addHandler(file_handler)
+        logging.basicConfig(
+            handlers=[stdout_handler])  # Use the same handler for basicConfig
 
         logger.info('Starting the main function execution...')  # Added logging statement
         print('Starting the main function execution...')  # Added print statement

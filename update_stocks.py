@@ -1,212 +1,250 @@
 import csv
 import json
 import yfinance as yf
+import argparse
 import asyncio
 import aiohttp
-from utils.yfinance_utils import download_with_session
+import logging
+import time
 from datetime import date, datetime, timedelta
 import re
-import logging
-from pathlib import Path
-import schedule
-import time
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('stock_update.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
 
-def get_valid_date_range(days=7):
-    """Get a valid date range that ends at the most recent market day."""
-    end_date = date.today()
-    if end_date.year > 2024:
-        end_date = date(2024, 2, 23)
-    start_date = end_date - timedelta(days=days)
-    return start_date, end_date
-
-async def get_market_cap(symbol):
-    """Retrieve market cap for a given symbol."""
+async def fetch_stock_data(session, symbol, start_date, today):
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
-        return info.get('marketCap')
-    except Exception as e:
-        logger.error(f"Error fetching market cap for {symbol}: {str(e)}")
-        return None
-
-async def fetch_stock_data(session, symbol, start_date, end_date):
-    try:
+        # Skip warrant symbols
         if symbol.endswith('W') or symbol.endswith('.W'):
             return symbol, False, None
 
         loop = asyncio.get_running_loop()
-        data = await loop.run_in_executor(
-            None, 
-            lambda: download_with_session(symbol, start=start_date, end=end_date, interval="1d")
-        )
+        data = await loop.run_in_executor(None, lambda: yf.download(symbol, start=start_date, end=today, progress=False))
         
-        if data is None or data.empty:
-            return symbol, False, None
-            
-        market_cap = await get_market_cap(symbol)
-        return symbol, len(data) > 0, market_cap
+        # Get market cap using yfinance Ticker object
+        ticker = await loop.run_in_executor(None, lambda: yf.Ticker(symbol))
+        market_cap = await loop.run_in_executor(None, lambda: getattr(ticker.info, 'marketCap', None))
+        
+        # Check if we got valid data
+        is_active = not data.empty and len(data) > 0
+        return symbol, is_active, market_cap
     except Exception as e:
-        logger.error(f"Error fetching data for {symbol}: {str(e)}")
+        logging.error(f"Error fetching data for {symbol}: {e}")
         return symbol, False, None
-        
-async def is_actively_traded_async(symbols, days=7, batch_size=25):
-    start_date, end_date = get_valid_date_range(days)
+
+async def process_symbols_async(symbols, days=7, batch_size=25):
+    today = datetime.today()
+    start_date = today - timedelta(days=days)
     active_statuses = {}
-    market_caps = {}
     
+    # Process in smaller chunks
     chunks = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+    total_chunks = len(chunks)
     
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks, 1):
+        logging.info(f"Processing chunk {i}/{total_chunks} ({len(chunk)} symbols)")
         async with aiohttp.ClientSession() as session:
             tasks = []
             for symbol in chunk:
-                task = fetch_stock_data(session, symbol, start_date, end_date)
+                task = fetch_stock_data(session, symbol, start_date, today)
                 tasks.append(task)
+
+            results = await asyncio.gather(*tasks)
+            for symbol, is_active, market_cap in results:
+                if is_active:
+                    active_statuses[symbol] = market_cap
             
-            try:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for i, result in enumerate(results):
-                    symbol = chunk[i]
-                    if isinstance(result, tuple):
-                        _, is_active, market_cap = result
-                        active_statuses[symbol] = is_active
-                        market_caps[symbol] = market_cap
-                    else:
-                        active_statuses[symbol] = False
-                        market_caps[symbol] = None
-                
-                await asyncio.sleep(2)
-            except Exception as e:
-                logger.error(f"Error processing batch: {str(e)}")
+            await asyncio.sleep(1)  # Delay between chunks
 
-    return active_statuses, market_caps
+    return active_statuses
 
-def process_nyse(csv_file_path):
-    filtered_listings = []
-    symbols_to_check = []
-    
-    with open(csv_file_path, mode='r', encoding='utf-8') as csvfile:
-        csv_reader = csv.DictReader(csvfile)
-        for row in csv_reader:
-            symbol = row['ACT Symbol']
-            company_name = row['Company Name']
+def process_nyse_nasdaq(file_path, exchange_name):
+    try:
+        logging.info(f"Starting {exchange_name} listings processing")
+        filtered_listings = []
+        symbols_to_check = []
+        
+        company_name_header = 'Company Name' if exchange_name == 'NYSE' else 'Security Name'
+        symbol_header = 'ACT Symbol' if exchange_name == 'NYSE' else 'Symbol'
+        
+        with open(file_path, mode='r', encoding='utf-8') as csvfile:
+            csv_reader = csv.DictReader(csvfile)
+            for row in csv_reader:
+                symbol = row[symbol_header]
+                company_name = row[company_name_header]
 
-            if not re.search(r'\b(Corporation(s)?|Acquisition(s)?|Warrant(s)?|Unit(s)?|Right(s)?)\b', company_name, re.IGNORECASE):
+                # Filter out SPACs, warrants, and similar entities
+                if re.search(r'\b(Corporation(s)?|Acquisition(s)?|Warrant(s)?|Unit(s)?|Right(s)?)\b', company_name, re.IGNORECASE):
+                    continue
+                if symbol.endswith('W') or symbol.endswith('.W'):
+                    continue
+
                 symbols_to_check.append(symbol)
 
-    active_statuses, market_caps = asyncio.run(is_actively_traded_async(symbols_to_check))
+        logging.info(f"Processing {len(symbols_to_check)} {exchange_name} symbols...")
+        active_statuses = asyncio.run(process_symbols_async(symbols_to_check))
 
-    with open(csv_file_path, mode='r', encoding='utf-8') as csvfile:
-        csv_reader = csv.DictReader(csvfile)
-        for row in csv_reader:
-            symbol = row['ACT Symbol']
-            if symbol in active_statuses and active_statuses[symbol]:
-                filtered_listings.append({
-                    'symbol': symbol,
-                    'company_name': row['Company Name'],
-                    'market_cap': market_caps.get(symbol)
-                })
-    
-    return filtered_listings
+        with open(file_path, mode='r', encoding='utf-8') as csvfile:
+            csv_reader = csv.DictReader(csvfile)
+            for row in csv_reader:
+                symbol = row[symbol_header]
+                if symbol in active_statuses:
+                    filtered_listings.append({
+                        'symbol': symbol,
+                        'company_name': row[company_name_header],
+                        'market_cap': active_statuses[symbol]
+                    })
 
-def process_hkex(csv_file_path):
-    filtered_listings = []
-    symbols_to_check = []
-    
-    with open(csv_file_path, mode='r', encoding='utf-8') as csvfile:
-        csv_reader = csv.DictReader(csvfile)
-        for row in csv_reader:
-            symbols_to_check.append(row['Symbol'])
+        output_file = f'data/{exchange_name.lower()}_filtered_listings.json'
+        with open(output_file, 'w') as f:
+            json.dump(filtered_listings, f, indent=4)
+        
+        logging.info(f"Saved {len(filtered_listings)} {exchange_name} listings to {output_file}")
+        return True
+    except Exception as e:
+        logging.error(f"Error processing {exchange_name} listings: {e}")
+        return False
 
-    active_statuses, market_caps = asyncio.run(is_actively_traded_async(symbols_to_check))
+def process_hkex(file_path):
+    try:
+        logging.info("Starting HKEX listings processing")
+        filtered_listings = []
+        symbols_to_check = []
+        
+        with open(file_path, mode='r', encoding='utf-8') as csvfile:
+            csv_reader = csv.DictReader(csvfile)
+            data = list(csv_reader)  # Store all rows
+            
+            # First pass: collect symbols
+            for row in data:
+                symbol = row['Symbol']
+                if not symbol.endswith('W'):  # Skip warrants
+                    symbols_to_check.append(f"{symbol}.HK")  # Add HK suffix for yfinance
 
-    with open(csv_file_path, mode='r', encoding='utf-8') as csvfile:
-        csv_reader = csv.DictReader(csvfile)
-        for row in csv_reader:
+        logging.info(f"Processing {len(symbols_to_check)} HKEX symbols...")
+        active_statuses = asyncio.run(process_symbols_async(symbols_to_check))
+
+        # Second pass: create filtered listings
+        for row in data:
             symbol = row['Symbol']
-            if symbol in active_statuses and active_statuses[symbol]:
+            yahoo_symbol = f"{symbol}.HK"
+            if yahoo_symbol in active_statuses:
                 filtered_listings.append({
                     'symbol': symbol,
                     'company_name': row['Company'],
-                    'market_cap': market_caps.get(symbol),
-                    'sector': row.get('Sector', ''),
-                    'industry': row.get('Industry', '')
+                    'sector': row['Sector'],
+                    'industry': row['Industry'],
+                    'market_cap': active_statuses[yahoo_symbol],
+                    'currency': row['Currency']
                 })
-                
-    return filtered_listings
 
-def process_asx(json_file_path):
-    filtered_listings = []
-    symbols_to_check = []
-    
-    with open(json_file_path, mode='r', encoding='utf-8') as jsonfile:
-        listings = json.load(jsonfile)
-        for row in listings:
-            symbols_to_check.append(f"{row['symbol']}.AX")
+        with open('data/hkex_filtered_listings.json', 'w') as f:
+            json.dump(filtered_listings, f, indent=4)
+        
+        logging.info(f"Saved {len(filtered_listings)} HKEX listings")
+        return True
+    except Exception as e:
+        logging.error(f"Error processing HKEX listings: {e}")
+        return False
 
-    active_statuses, market_caps = asyncio.run(is_actively_traded_async(symbols_to_check))
+def process_asx(file_path):
+    try:
+        logging.info("Starting ASX listings processing")
+        filtered_listings = []
+        symbols_to_check = []
+        
+        with open(file_path, mode='r', encoding='utf-8') as jsonfile:
+            listings = json.load(jsonfile)
+            for row in listings:
+                symbol = f"{row['symbol']}.AX"  # Add AX suffix for yfinance
+                symbols_to_check.append(symbol)
 
-    with open(json_file_path, mode='r', encoding='utf-8') as jsonfile:
-        listings = json.load(jsonfile)
+        logging.info(f"Processing {len(symbols_to_check)} ASX symbols...")
+        active_statuses = asyncio.run(process_symbols_async(symbols_to_check))
+
+        # Create filtered listings
         for row in listings:
             symbol = f"{row['symbol']}.AX"
-            if symbol in active_statuses and active_statuses[symbol]:
+            if symbol in active_statuses:
                 filtered_listings.append({
-                    'symbol': symbol,
+                    'symbol': row['symbol'],
                     'company_name': row['companyName'],
-                    'market_cap': market_caps.get(symbol),
-                    'industry': row.get('industry', '')
+                    'industry': row['industry'],
+                    'market_cap': active_statuses[symbol]
                 })
-                
-    return filtered_listings
 
-def update_stock_listings():
-    """Update stock listings for all exchanges."""
-    data_dir = Path('data')
-    data_dir.mkdir(exist_ok=True)
-    
-    try:
-        # Process NYSE listings
-        nyse_filtered = process_nyse('data/nyse-listed.csv')
-        with open(data_dir / 'nyse_filtered_listings.json', 'w') as f:
-            json.dump(nyse_filtered, f, indent=4)
-        logger.info(f"Processed {len(nyse_filtered)} NYSE listings")
-
-        # Process HKEX listings
-        hkex_filtered = process_hkex('data/hk_stocks_20250218_015522.csv')
-        with open(data_dir / 'hkex_filtered_listings.json', 'w') as f:
-            json.dump(hkex_filtered, f, indent=4)
-        logger.info(f"Processed {len(hkex_filtered)} HKEX listings")
-
-        # Process ASX listings
-        asx_filtered = process_asx('data/asx_valid_listings.json')
-        with open(data_dir / 'asx_filtered_listings.json', 'w') as f:
-            json.dump(asx_filtered, f, indent=4)
-        logger.info(f"Processed {len(asx_filtered)} ASX listings")
-
+        with open('data/asx_filtered_listings.json', 'w') as f:
+            json.dump(filtered_listings, f, indent=4)
+        
+        logging.info(f"Saved {len(filtered_listings)} ASX listings")
+        return True
     except Exception as e:
-        logger.error(f"Error during stock update process: {str(e)}")
-        raise
+        logging.error(f"Error processing ASX listings: {e}")
+        return False
 
-def run_scheduler():
-    """Run the scheduler for daily updates."""
-    schedule.every().day.at("00:00").do(update_stock_listings)
+def update_all_listings(exchanges=None):
+    """
+    Update stock listings for specified exchanges.
+    Args:
+        exchanges (list): List of exchanges to update. If None, updates all exchanges.
+    """
+    all_exchanges = {
+        'NYSE': lambda: process_nyse_nasdaq('data/nyse-listed.csv', 'NYSE'),
+        'NASDAQ': lambda: process_nyse_nasdaq('data/nasdaq-listed.csv', 'NASDAQ'),
+        'HKEX': lambda: process_hkex('data/hk_stocks_20250218_015522.csv'),
+        'ASX': lambda: process_asx('data/asx_valid_listings.json')
+    }
     
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    exchanges_to_process = exchanges if exchanges else all_exchanges.keys()
+    logging.info(f"Starting update of stock listings for: {', '.join(exchanges_to_process)}")
+    
+    results = {}
+    for exchange in exchanges_to_process:
+        if exchange in all_exchanges:
+            results[exchange] = all_exchanges[exchange]()
+        else:
+            logging.error(f"Unknown exchange: {exchange}")
+            results[exchange] = False
+    
+    # Log overall status
+    status = all(results.values())
+    if status:
+        logging.info(f"Successfully updated stock listings for: {', '.join(exchanges_to_process)}")
+    else:
+        logging.error("Some exchanges failed to update, check logs for details")
+    
+    return status
 
 if __name__ == "__main__":
-    update_stock_listings()  # Run initial update
-    run_scheduler()  # Start scheduler for daily updates
+    try:
+        # Set up command line arguments
+        parser = argparse.ArgumentParser(description='Update stock listings from various exchanges')
+        parser.add_argument('--exchanges', nargs='+', choices=['NYSE', 'NASDAQ', 'HKEX', 'ASX'],
+                          help='Specify exchanges to update (e.g., NYSE NASDAQ). If not specified, updates all exchanges.')
+        args = parser.parse_args()
+
+        # Initial update
+        update_all_listings(args.exchanges)
+        
+        if not args.exchanges:
+            logging.info("No specific exchanges selected, will schedule updates for all exchanges")
+        else:
+            logging.info(f"Scheduling updates for exchanges: {', '.join(args.exchanges)}")
+
+        # Schedule daily updates (run at 00:00 local time)
+        scheduler = BlockingScheduler()
+        scheduler.add_job(
+            update_all_listings,
+            CronTrigger(hour=0, minute=0),
+            args=[args.exchanges],
+            id='stock_update',
+            max_instances=1,
+            replace_existing=True
+        )
+        
+        logging.info("Starting scheduler for daily updates")
+        scheduler.start()
+    except KeyboardInterrupt:
+        logging.info("Scheduler stopped by user")
+    except Exception as e:
+        logging.error(f"Scheduler error: {e}")
