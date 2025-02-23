@@ -1,0 +1,25 @@
+{
+    "exchanges": [
+        {
+            "name": "ASX"
+        },
+        {
+            "name": "HKEX"
+        },
+        {
+            "name": "NASDAQ"
+        },
+        {
+            "name": "NYSE"
+        }
+    ],
+    "providers": {
+        "yahooFinance": {
+            "rateLimit": 2000,
+            "batchSize": 100
+        }
+    },
+    "dataDirectory": "data",
+    "outputDirectory": "output",
+    "logDirectory": "logs"
+}
