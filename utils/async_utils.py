@@ -135,8 +135,10 @@ class YahooFinanceClient:
     async def _fetch_data(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
         """Optimized data fetching using thread pool."""
         try:
+            logger.debug(f"Fetching data for symbol: {symbol}")
             def fetch():
                 ticker = yf.Ticker(symbol)
+                logger.debug(f"Created Ticker object for {symbol}")
                 return ticker.history(start=start_date, end=end_date, interval='1d', auto_adjust=True)
             
             return await asyncio.get_event_loop().run_in_executor(thread_pool, fetch)
