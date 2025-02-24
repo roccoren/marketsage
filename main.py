@@ -340,6 +340,7 @@ class StockQuoteManager:
     async def fetch_historical_data(
         self,
         exchange: str,
+        symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None
     ) -> None:
         """
@@ -353,23 +354,20 @@ class StockQuoteManager:
             logger.error(f"Invalid exchange: {exchange}")
             return
 
-        # Load exchange symbols
-        listing_file = self.base_dir / f"{exchange.lower()}_filtered_listings.json"
-        try:
-            with open(listing_file) as f:
-                listings = json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading {exchange} listings: {e}")
-            return
+        # Get symbols from existing files if not provided
+        if symbols is None:
+            exchange_dir = self.exchanges[exchange]
+            logger.info(f"Scanning directory: {exchange_dir}")
+            symbols = [f.stem for f in exchange_dir.glob('*.json')]
+            logger.info(f"Found {len(symbols)} existing symbol files")
 
         # Initialize progress tracking
         await self.progress_tracker.load_progress()
-        total_symbols = len(listings)
+        total_symbols = len(symbols)
         completed = 0
 
         async with self.client:
-            for listing in listings:
-                symbol = listing['symbol']
+            for symbol in symbols:
                 yahoo_symbol = self.get_yahoo_symbol(exchange, symbol)
                 output_path = self.exchanges[exchange] / f"{symbol}.json"
 
@@ -467,21 +465,19 @@ def main():
         if args.command == 'update-quotes':
             # Process each selected exchange
             for exchange in (args.exchanges or manager.exchanges.keys()):
-                logger.info(f"\n{'='*50}\nProcessing exchange: {exchange}\n{'='*50}")
                 try:
-                    logger.debug(f"Looking for listings file: data/{exchange.lower()}_filtered_listings.json")
-                    listing_file = Path(f"data/{exchange.lower()}_filtered_listings.json")
-                    if listing_file.exists():
-                        with open(listing_file, 'r') as f:
-                            logger.debug("Loading listings file...")
-                            listings = json.load(f)
-                            logger.info(f"Found {len(listings)} symbols, first 5: {[l['symbol'] for l in listings[:5]]}")
-                        logger.info(f"Loaded {len(listings)} symbols from {listing_file}")
-                        if listings:
-                            logger.info(f"Sample symbols: {[l['symbol'] for l in listings[:5]]}")
-                            
-                        for listing in listings:
-                            manager.update_stock_quote(listing["symbol"], exchange)
+                    logger.info(f"\n{'='*50}\nProcessing exchange: {exchange}\n{'='*50}")
+                    exchange_dir = manager.exchanges[exchange]
+                    logger.info(f"Scanning directory: {exchange_dir}")
+                    symbol_files = list(exchange_dir.glob('*.json'))
+                    logger.info(f"Found {len(symbol_files)} existing symbol files")
+                    if symbol_files:
+                        sample_symbols = [f.stem for f in symbol_files[:5]]
+                        logger.info(f"Sample symbols: {sample_symbols}")
+                        
+                    for symbol_file in symbol_files:
+                        symbol = symbol_file.stem  # Get filename without .json extension
+                        manager.update_stock_quote(symbol, exchange)
                 except Exception as e:
                     logger.error(f"Error processing {exchange}: {str(e)}")
 
@@ -513,30 +509,28 @@ def main():
             for exchange in (args.exchanges or manager.exchanges.keys()):
                 try:
                     exchange_signals = []
-                    listing_file = Path(f"data/{exchange.lower()}_filtered_listings.json")
-                    if listing_file.exists():
-                        with open(listing_file, 'r') as f:
-                            logger.info(f"Reading listings from {listing_file}")
-                            listings = json.load(f)
-                            manager.log_debug('macd', f"HKEX listings loaded: {len(listings)} symbols found")
-                            logger.info(f"Processing {len(listings)} symbols for {exchange}")
-
-                            for listing in listings:
-                                manager.log_debug('macd', f"Processing listing: {listing}")
-                                symbol = listing["symbol"]
-                                manager.log_debug('macd', f"Attempting to analyze MACD for {exchange}:{symbol}")
-                                macd_analysis_result = manager.analyze_macd_for_last_7_days(exchange, symbol)
-                                manager.log_debug('macd', f"MACD analysis result for {symbol}: {macd_analysis_result}")
-                                if macd_analysis_result:
-                                    logger.info(f"✓ Successfully analyzed {symbol}: Found MACD signals")
-                                    exchange_signals.append(macd_analysis_result)
-                                    signals.extend(exchange_signals)
-                                    print(f"\nMACD Signals for {exchange} - {symbol}:")
-                                    if macd_analysis_result and macd_analysis_result['signals']:
-                                        for signal in macd_analysis_result['signals']:
-                                            print(f"  Date: {signal['signal_date']}, Signal: {signal['type']}, Price: {signal['price']:.2f}")
-                                    else:
-                                        print(f"  No MACD signals found for this exchange in the last 7 days.")
+                    exchange_dir = manager.exchanges[exchange]
+                    logger.info(f"Scanning directory: {exchange_dir}")
+                    symbol_files = list(exchange_dir.glob('*.json'))
+                    logger.info(f"Found {len(symbol_files)} symbol files in {exchange}")
+                    manager.log_debug('macd', f"{exchange} symbols found: {len(symbol_files)}")
+ 
+                    for symbol_file in symbol_files:
+                        symbol = symbol_file.stem  # Get filename without .json extension
+                        manager.log_debug('macd', f"Processing symbol file: {symbol_file}")
+                        manager.log_debug('macd', f"Attempting to analyze MACD for {exchange}:{symbol}")
+                        macd_analysis_result = manager.analyze_macd_for_last_7_days(exchange, symbol)
+                        manager.log_debug('macd', f"MACD analysis result for {symbol}: {macd_analysis_result}")
+                        if macd_analysis_result:
+                            logger.info(f"✓ Successfully analyzed {symbol}: Found MACD signals")
+                            exchange_signals.append(macd_analysis_result)
+                            signals.extend(exchange_signals)
+                            print(f"\nMACD Signals for {exchange} - {symbol}:")
+                            if macd_analysis_result and macd_analysis_result['signals']:
+                                for signal in macd_analysis_result['signals']:
+                                    print(f"  Date: {signal['signal_date']}, Signal: {signal['type']}, Price: {signal['price']:.2f}")
+                            else:
+                                print(f"  No MACD signals found for this exchange in the last 7 days.")
 
                 except Exception as e:
                     logger.warning(f"Non-critical error while processing {exchange} - continuing with analysis: {str(e)}")
