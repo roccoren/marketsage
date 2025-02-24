@@ -1,6 +1,5 @@
 import csv
 import json
-import yfinance as yf
 import argparse
 import asyncio
 import aiohttp
@@ -10,52 +9,36 @@ from datetime import date, datetime, timedelta
 import re
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from utils.async_utils import YahooFinanceClient
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-async def fetch_stock_data(session, symbol, start_date, today):
-    try:
-        # Skip warrant symbols
-        if symbol.endswith('W') or symbol.endswith('.W'):
-            return symbol, False, None
-
-        loop = asyncio.get_running_loop()
-        data = await loop.run_in_executor(None, lambda: yf.download(symbol, start=start_date, end=today, progress=False))
-        
-        # Get market cap using yfinance Ticker object
-        ticker = await loop.run_in_executor(None, lambda: yf.Ticker(symbol))
-        market_cap = await loop.run_in_executor(None, lambda: getattr(ticker.info, 'marketCap', None))
-        
-        # Check if we got valid data
-        is_active = not data.empty and len(data) > 0
-        return symbol, is_active, market_cap
-    except Exception as e:
-        logging.error(f"Error fetching data for {symbol}: {e}")
-        return symbol, False, None
-
-async def process_symbols_async(symbols, days=7, batch_size=25):
+async def process_symbols_async(symbols, days=7):
+    """
+    Process stock symbols in parallel using optimized batch processing.
+    """
     today = datetime.today()
     start_date = today - timedelta(days=days)
     active_statuses = {}
     
-    # Process in smaller chunks
-    chunks = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
-    total_chunks = len(chunks)
+    # Use optimized client with increased rate limit and batch size
+    async with YahooFinanceClient(rate_limit_ms=2000, batch_size=50) as client:
+        # Get historical data for all symbols in optimized batches
+        results = await client.get_history_batch(
+            symbols,
+            start_date=start_date.strftime('%Y-%m-%d'),
+            end_date=today.strftime('%Y-%m-%d')
+        )
+        
+        # Process results
+        for symbol, data in results.items():
+            if data is not None:  # If we got valid data
+                # Get market cap for valid symbols
+                info = await client.get_ticker_info(symbol)
+                market_cap = info['price'].get('marketCap') if info else None
+                active_statuses[symbol] = market_cap
     
-    for i, chunk in enumerate(chunks, 1):
-        logging.info(f"Processing chunk {i}/{total_chunks} ({len(chunk)} symbols)")
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for symbol in chunk:
-                task = fetch_stock_data(session, symbol, start_date, today)
-                tasks.append(task)
-
-            results = await asyncio.gather(*tasks)
-            for symbol, is_active, market_cap in results:
-                if is_active:
-                    active_statuses[symbol] = market_cap
-            
-            await asyncio.sleep(1)  # Delay between chunks
-
     return active_statuses
 
 def process_nyse_nasdaq(file_path, exchange_name):

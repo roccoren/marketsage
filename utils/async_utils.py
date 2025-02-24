@@ -1,236 +1,63 @@
 """Async utilities for handling concurrent operations and rate limiting."""
 import asyncio
-import aiohttp
 import aiofiles
+import aiohttp
 import time
-from typing import Dict, Any, Optional, List
 import logging
 import json
+from typing import Dict, Any, Optional, List
+import yfinance as yf
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+import pandas as pd
+from aiohttp import TCPConnector
+from functools import partial
+import gzip
+import io
 
 logger = logging.getLogger(__name__)
+
+# Global thread pool for yfinance operations
+thread_pool = ThreadPoolExecutor(max_workers=20)  # Increased worker count
 
 class TokenBucket:
     """Token bucket rate limiter for controlling request rates."""
     
     def __init__(self, rate_limit_ms: int, max_tokens: int = 1):
-        """
-        Initialize the token bucket.
-        
-        Args:
-            rate_limit_ms: Minimum time between tokens in milliseconds
-            max_tokens: Maximum number of tokens the bucket can hold
-        """
-        self.rate_limit = rate_limit_ms / 1000.0  # Convert to seconds
+        self.rate_limit = rate_limit_ms / 1000.0
         self.max_tokens = max_tokens
         self.tokens = max_tokens
         self.last_update = time.time()
         self._lock = asyncio.Lock()
     
     async def acquire(self) -> None:
-        """Acquire a token from the bucket, waiting if necessary."""
         async with self._lock:
-            while self.tokens <= 0:
-                now = time.time()
-                time_passed = now - self.last_update
-                new_tokens = int(time_passed / self.rate_limit)
-                
-                if new_tokens > 0:
-                    self.tokens = min(self.max_tokens, new_tokens)
-                    self.last_update = now
-                else:
-                    await asyncio.sleep(self.rate_limit)
+            now = time.time()
+            time_passed = now - self.last_update
+            new_tokens = int(time_passed / self.rate_limit)
             
-            self.tokens -= 1
-
-class YahooFinanceClient:
-    """Async client for Yahoo Finance API with rate limiting."""
-    
-    def __init__(self, rate_limit_ms: int, batch_size: int):
-        """
-        Initialize the Yahoo Finance client.
-        
-        Args:
-            rate_limit_ms: Rate limit in milliseconds between requests
-            batch_size: Maximum number of concurrent requests
-        """
-        self.rate_limiter = TokenBucket(max(rate_limit_ms, 10000), 3)  # Minimum 10 second delay with burst capacity of 3
-        self.batch_size = batch_size
-        self.session: Optional[aiohttp.ClientSession] = None
-        self._lock = asyncio.Lock()
-        
-    async def __aenter__(self):
-        """Create client session when entering context."""
-        if not self.session:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-            }
-            self.session = aiohttp.ClientSession(headers=headers)
-        return self
-        
-    async def __aexit__(self, exc_type, exc, tb):
-        """Close client session when exiting context."""
-        if self.session:
-            await self.session.close()
-            self.session = None
-
-    def _is_valid_stock_data(self, result: Dict[str, Any]) -> bool:
-        """
-        Validate if the stock data indicates an active trading security.
-        """
-        if not result or not result.get('price'):
-            logger.debug("No price data found in result")
-            return False
+            if new_tokens > 0:
+                self.tokens = min(self.max_tokens, self.tokens + new_tokens)
+                self.last_update = now
             
-        price_data = result['price']
-            
-        # Log validation details for debugging
-        validation_checks = {
-            # Check for valid market price
-            'has_valid_price': isinstance(price_data.get('regularMarketPrice'), (int, float)),
-            # Verify security type
-            'valid_type': price_data.get('quoteType') in ['EQUITY', 'ETF'],
-            # Verify the stock has recent trading activity (within last 30 days)
-            'has_recent_trading': (
-                isinstance(price_data.get('regularMarketTime'), (int, float)) and
-                time.time() - price_data.get('regularMarketTime', 0) < 30 * 24 * 3600
-            ),
-            # Check market state - allow closed for after-hours
-            'valid_market_state': price_data.get('marketState', '').lower() in ['pre', 'post', 'regular', 'closed'],
-            # Ensure not halted
-            'not_halted': price_data.get('tradingStatus', '').lower() != 'halted'
-        }
-            
-        # Log detailed validation results
-        logger.debug(f"Validation details: {validation_checks}")
-        logger.debug(f"Market State: {price_data.get('marketState')}")
-        logger.debug(f"Quote Type: {price_data.get('quoteType')}")
-        logger.debug(f"Trading Status: {price_data.get('tradingStatus')}")
-            
-        return all(validation_checks.values())
-
-    async def get_ticker_info(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """
-        Get basic information for a ticker symbol.
-        
-        Args:
-            symbol: The stock symbol to query
-            
-        Returns:
-            Dict containing ticker information or None if the request failed
-        """
-        await self.rate_limiter.acquire()
-        
-        try:
-            import yfinance as yf
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            if info:
-                result = {'price': info}
-                logger.debug(f"Got info for {symbol}: {info}")
-                
-                if not self._is_valid_stock_data(result):
-                    logger.debug(f"Symbol {symbol} failed validation checks")
-                    logger.debug(f"Quote data: {info}")
-                    return None
-                
-                return result
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching info for {symbol}: {str(e)}")
-            return None
-
-    async def get_history(
-        self,
-        symbol: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Get historical data for a ticker symbol.
-        
-        Args:
-            symbol: The stock symbol to query
-            start_date: Start date in YYYY-MM-DD format
-            end_date: End date in YYYY-MM-DD format
-            
-        Returns:
-            Dict containing historical data or None if the request failed
-        """
-        await self.rate_limiter.acquire()
-        
-        logger.debug(f"Getting history for {symbol} from {start_date} to {end_date}")
-        try:
-            import yfinance as yf
-            ticker = yf.Ticker(symbol)
-            
-            # Determine the period and interval
-            if start_date and end_date:
-                data = ticker.history(start=start_date, end=end_date, interval='1d')
+            if self.tokens <= 0:
+                wait_time = self.rate_limit * 0.1
+                await asyncio.sleep(wait_time)
             else:
-                data = ticker.history(period='max', interval='1d')
-            
-            if data.empty:
-                logger.debug(f"No historical data found for {symbol}")
-                return None
-                
-            # Convert the data to the expected format
-            result = {
-                'chart': {
-                    'result': [{
-                        'timestamp': [int(ts.timestamp()) for ts in data.index],
-                        'indicators': {
-                            'quote': [{
-                        'open': data['Open'].tolist(),
-                                'high': data['High'].tolist(),
-                                'low': data['Low'].tolist(),
-                                'close': data['Close'].tolist(),
-                                'volume': data['Volume'].tolist()
-                            }],
-                            'adjclose': [{
-                                'adjclose': data['Close'].tolist()
-                            }]
-                        }
-                    }]
-                }
-            }
-            return result
-        
-        except Exception as e:
-            logger.error(f"Error fetching history for {symbol}: {str(e)}")
-            return None
+                self.tokens -= 1
 
 class CircuitBreaker:
     """Circuit breaker for protecting against API failures."""
     
     def __init__(self, failure_threshold: int = 5, reset_timeout: float = 60):
-        """
-        Initialize the circuit breaker.
-        
-        Args:
-            failure_threshold: Number of failures before opening the circuit
-            reset_timeout: Time in seconds before attempting to reset the circuit
-        """
         self.failure_threshold = failure_threshold
         self.reset_timeout = reset_timeout
         self.failures = 0
         self.last_failure_time = 0
-        self.state = "closed"  # closed, open, or half-open
+        self.state = "closed"
         self._lock = asyncio.Lock()
         
     async def __call__(self, func, *args, **kwargs):
-        """
-        Execute the protected function with circuit breaker logic.
-        
-        Args:
-            func: Async function to execute
-            *args: Positional arguments for the function
-            **kwargs: Keyword arguments for the function
-            
-        Returns:
-            The result of the protected function call
-        """
         async with self._lock:
             if self.state == "open":
                 if time.time() - self.last_failure_time >= self.reset_timeout:
@@ -253,16 +80,149 @@ class CircuitBreaker:
                     
                 raise e
 
+class YahooFinanceClient:
+    """Optimized async client for Yahoo Finance API."""
+    
+    def __init__(self, rate_limit_ms: int, batch_size: int):
+        self.rate_limiter = TokenBucket(max(rate_limit_ms, 1000), 10)  # Increased token capacity
+        self.batch_size = min(batch_size, 100)  # Cap batch size at 100
+        self.session: Optional[aiohttp.ClientSession] = None
+        self._lock = asyncio.Lock()
+        self.circuit_breaker = CircuitBreaker()
+        
+    async def __aenter__(self):
+        if not self.session:
+            # Optimize connection pooling and enable keepalive
+            connector = TCPConnector(
+                limit=100,  # Maximum number of concurrent connections
+                ttl_dns_cache=300,  # Cache DNS results for 5 minutes
+                use_dns_cache=True,
+                keepalive_timeout=60  # Keep connections alive for 60 seconds
+            )
+            
+            # Optimize headers for better network performance
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive'
+            }
+            
+            self.session = aiohttp.ClientSession(
+                connector=connector,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30)
+            )
+        return self
+        
+    async def __aexit__(self, exc_type, exc, tb):
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+    def _optimize_date_range(self, start_date: Optional[str], end_date: Optional[str]) -> tuple[str, str]:
+        """Optimize date range to minimize data transfer."""
+        if not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+        
+        if not start_date:
+            # Default to 1 year of data if no start date specified
+            start = datetime.now() - timedelta(days=365)
+            start_date = start.strftime('%Y-%m-%d')
+            
+        return start_date, end_date
+
+    async def _fetch_data(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """Optimized data fetching using thread pool."""
+        try:
+            def fetch():
+                ticker = yf.Ticker(symbol)
+                return ticker.history(start=start_date, end=end_date, interval='1d', auto_adjust=True)
+            
+            return await asyncio.get_event_loop().run_in_executor(thread_pool, fetch)
+        except Exception as e:
+            logger.error(f"Error fetching data for {symbol}: {str(e)}")
+            return None
+
+    async def get_history_batch(
+        self,
+        symbols: List[str],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Get historical data for multiple symbols with optimized batch processing."""
+        async def protected_batch_fetch():
+            start_date_opt, end_date_opt = self._optimize_date_range(start_date, end_date)
+            results = {}
+            
+            # Use semaphore to control concurrent operations
+            semaphore = asyncio.Semaphore(20)  # Increased from 10 to 20
+            
+            async def process_symbol(symbol: str) -> tuple[str, Optional[Dict[str, Any]]]:
+                async with semaphore:
+                    await self.rate_limiter.acquire()
+                    
+                    data = await self._fetch_data(symbol, start_date_opt, end_date_opt)
+                    if data is None or data.empty:
+                        return symbol, None
+                    
+                    # Optimize data structure creation
+                    timestamps = [int(ts.timestamp()) for ts in data.index]
+                    quotes = data[['Open', 'High', 'Low', 'Close', 'Volume']].values.T
+                    
+                    result = {
+                        'chart': {
+                            'result': [{
+                                'timestamp': timestamps,
+                                'indicators': {
+                                    'quote': [{
+                                        'open': quotes[0].tolist(),
+                                        'high': quotes[1].tolist(),
+                                        'low': quotes[2].tolist(),
+                                        'close': quotes[3].tolist(),
+                                        'volume': quotes[4].tolist()
+                                    }],
+                                    'adjclose': [{
+                                        'adjclose': quotes[3].tolist()  # Using adjusted close
+                                    }]
+                                }
+                            }]
+                        }
+                    }
+                    return symbol, result
+            
+            # Process symbols in optimized batches
+            for i in range(0, len(symbols), self.batch_size):
+                batch = symbols[i:i + self.batch_size]
+                tasks = [process_symbol(symbol) for symbol in batch]
+                
+                # Gather results with error handling
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Filter out any exceptions and add successful results
+                for result in batch_results:
+                    if isinstance(result, tuple):
+                        results[result[0]] = result[1]
+            
+            return results
+
+        # Use circuit breaker for batch fetching
+        return await self.circuit_breaker(protected_batch_fetch)
+
+    async def get_history(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get historical data for a single symbol."""
+        results = await self.get_history_batch([symbol], start_date, end_date)
+        return results.get(symbol)
+
 class UpdateProgressTracker:
     """Track and persist progress of stock updates."""
     
     def __init__(self, data_dir: str):
-        """
-        Initialize the progress tracker.
-        
-        Args:
-            data_dir: Directory where progress data will be stored
-        """
         self.data_dir = data_dir
         self.progress_file = f"{data_dir}/update_progress.json"
         self.progress: Dict[str, Any] = {}
@@ -286,14 +246,7 @@ class UpdateProgressTracker:
         total_symbols: int,
         completed_symbols: int
     ) -> None:
-        """
-        Update progress for an exchange.
-        
-        Args:
-            exchange: Name of the exchange
-            total_symbols: Total number of symbols to process
-            completed_symbols: Number of symbols completed
-        """
+        """Update progress for an exchange."""
         async with self._lock:
             self.progress['exchanges'][exchange] = {
                 'total': total_symbols,
@@ -303,13 +256,7 @@ class UpdateProgressTracker:
             await self._save_progress()
                 
     async def add_failed_symbol(self, exchange: str, symbol: str) -> None:
-        """
-        Record a failed symbol update.
-        
-        Args:
-            exchange: Exchange the symbol belongs to
-            symbol: The failed symbol
-        """
+        """Record a failed symbol update."""
         async with self._lock:
             self.progress['failed_symbols'].append({
                 'exchange': exchange,

@@ -1,149 +1,330 @@
 #!/usr/bin/env python3
-
-import argparse
+import os
 import json
 import logging
-import sys
+import tempfile
+import argparse
 import asyncio
+from datetime import datetime
 from pathlib import Path
-from typing import Dict
+import pandas as pd
+from typing import Dict, Any, Optional, List
 
-class ScannerConfig:
-    def __init__(self, config_data: Dict):
-        # Initialize configuration settings
-        self.exchanges = config_data.get('exchanges', [])
-        self.providers = config_data.get('providers', {})
-        self.data_directory = config_data.get('dataDirectory', 'data')
-        self.output_directory = config_data.get('outputDirectory', 'output')
-        self.log_directory = config_data.get('logDirectory', 'logs')
+from utils.yfinance_utils import download_with_session
+from utils.async_utils import YahooFinanceClient, UpdateProgressTracker
+import update_stocks
 
-    def validate(self) -> None:
-        if not self.exchanges:
-            raise ValueError("No exchanges configured")
-        
-        if not self.data_directory:
-            raise ValueError("Data directory not specified")
-        
-        if not self.output_directory:
-            raise ValueError("Output directory not specified")
-        
-        if not self.log_directory:
-            raise ValueError("Log directory not specified")
-        
-        yahoo_finance = self.providers.get('yahooFinance', {})
-        if not yahoo_finance.get('rateLimit'):
-            raise ValueError("Yahoo Finance rate limit not specified")
-        
-        if not yahoo_finance.get('batchSize'):
-            raise ValueError("Yahoo Finance batch size not specified")
-        
-        # Validate LongPort if configured
-        long_port = self.providers.get('longPort', {})
-        if long_port.get('apiKey'):
-            if not long_port.get('apiSecret'):
-                raise ValueError("LongPort API secret not specified")
-            if not long_port.get('rateLimit'):
-                raise ValueError("LongPort rate limit not specified")
-            if not long_port.get('batchSize'):
-                raise ValueError("LongPort batch size not specified")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('stock_update.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-def load_config(config_path: str) -> ScannerConfig:
-    """Load and validate configuration from JSON file."""
-    try:
-        with open(config_path, 'r') as f:
-            config_data = json.load(f)
-        config = ScannerConfig(config_data)
-        config.validate()
-        return config
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in config file: {e}")
+class StockQuoteManager:
+    def __init__(self):
+        self.base_dir = Path("data")
+        self.exchanges = {
+            "NYSE": self.base_dir / "NYSE",
+            "NASDAQ": self.base_dir / "NASDAQ",
+            "HKEX": self.base_dir / "HKEX",
+            "ASX": self.base_dir / "ASX"
+        }
+        self.client = YahooFinanceClient(rate_limit_ms=10000, batch_size=3)
+        self.progress_tracker = UpdateProgressTracker("data")
+        self._create_directories()
 
-def update_config_for_exchange(config: ScannerConfig, market: str) -> None:
-    """Update configuration to only include the selected market."""
-    config.exchanges = [exchange for exchange in config.exchanges 
-                       if exchange['name'] == market]
+    def _create_directories(self) -> None:
+        """Create directory structure for each exchange if it doesn't exist."""
+        for exchange_dir in self.exchanges.values():
+            exchange_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Ensured directory exists: {exchange_dir}")
 
-async def main():
-    # Set up argument parser
-    parser = argparse.ArgumentParser(description='Stock Market Scanner')
-    parser.add_argument('--config', default='config.json',
-                      help='Path to configuration file')
-    parser.add_argument('--market', required=True,
-                      help='Market to scan (ASX, HKEX, NASDAQ, NYSE)')
-    parser.add_argument('--update', action='store_true',
-                      help='Market to scan (ASX, HKEX, NASDAQ, NYSE)')
+    def _validate_quote_data(self, data: pd.DataFrame) -> bool:
+        """
+        Validate the stock quote data.
+        
+        Args:
+            data: DataFrame containing stock quote data
+            
+        Returns:
+            bool: True if data is valid, False otherwise
+        """
+        if data is None or data.empty:
+            return False
+            
+        required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
+        if not all(col in data.columns for col in required_columns):
+            logger.error(f"Missing required columns. Found: {data.columns}")
+            return False
+            
+        if data.isnull().values.any():
+            logger.warning("Data contains null values")
+            return False
+            
+        return True
+
+    def _prepare_quote_data(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Prepare quote data for storage.
+        
+        Args:
+            data: DataFrame containing latest quote
+            
+        Returns:
+            dict: Formatted quote data
+        """
+        latest_row = data.iloc[-1]
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "trading_date": data.index[-1].isoformat(),
+            "price": {
+                "open": float(latest_row["Open"]),
+                "high": float(latest_row["High"]),
+                "low": float(latest_row["Low"]),
+                "close": float(latest_row["Close"])
+            },
+            "volume": int(latest_row["Volume"]),
+            "additional_metrics": {
+                "vwap": float(latest_row.get("VWAP", 0)) if "VWAP" in latest_row else None,
+                "typical_price": (float(latest_row["High"]) + float(latest_row["Low"]) + float(latest_row["Close"])) / 3
+            }
+        }
+
+    def _atomic_write_json(self, filepath: Path, data: Dict[str, Any]) -> bool:
+        """
+        Atomically write data to JSON file using a temporary file.
+        
+        Args:
+            filepath: Path to the target JSON file
+            data: Data to write
+            
+        Returns:
+            bool: True if write was successful, False otherwise
+        """
+        try:
+            # Create a temporary file in the same directory
+            with tempfile.NamedTemporaryFile(mode='w', 
+                                           dir=filepath.parent,
+                                           delete=False,
+                                           suffix='.tmp') as tmp_file:
+                # Write data to temporary file
+                json.dump(data, tmp_file, indent=2)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+                
+            # Atomic rename
+            os.rename(tmp_file.name, filepath)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to write file {filepath}: {str(e)}")
+            # Clean up temporary file if it exists
+            if 'tmp_file' in locals():
+                try:
+                    os.unlink(tmp_file.name)
+                except OSError:
+                    pass
+            return False
+
+    def update_stock_quote(self, symbol: str, exchange: str) -> bool:
+        """
+        Fetch and update quote data for a single stock.
+        
+        Args:
+            symbol: Stock symbol
+            exchange: Exchange code (NYSE, NASDAQ, HKEX, ASX)
+            
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        if exchange not in self.exchanges:
+            logger.error(f"Invalid exchange: {exchange}")
+            return False
+            
+        try:
+            # Fetch latest quote data
+            data = download_with_session(symbol, period="1d", interval="1m")
+            
+            if not self._validate_quote_data(data):
+                logger.error(f"Invalid quote data for {symbol}")
+                return False
+                
+            # Prepare quote data
+            quote_data = self._prepare_quote_data(data)
+            
+            # Construct file path
+            file_path = self.exchanges[exchange] / f"{symbol}.json"
+            
+            # Atomic write
+            if self._atomic_write_json(file_path, quote_data):
+                logger.info(f"Successfully updated quote for {symbol} ({exchange})")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error updating quote for {symbol}: {str(e)}")
+            return False
+
+    def get_yahoo_symbol(self, exchange: str, symbol: str) -> str:
+        """Get Yahoo Finance formatted symbol."""
+        # if exchange == 'ASX':
+        #     return f"{symbol}.AX"
+        # elif exchange == 'HKEX':
+        #     return f"{symbol}.HK"
+        return symbol
+
+    async def should_update_historical(self, symbol_path: Path, start_date: str) -> bool:
+        """Check if historical data needs updating."""
+        try:
+            if not symbol_path.exists():
+                return True
+                
+            with open(symbol_path) as f:
+                data = json.load(f)
+                
+            timestamps = data.get('chart', {}).get('result', [{}])[0].get('timestamp', [])
+            if not timestamps:
+                return True
+                
+            latest_date = datetime.fromtimestamp(timestamps[-1]).date()
+            today = datetime.now().date()
+            
+            return (today - latest_date).days > 1
+                
+        except Exception as e:
+            logger.error(f"Error checking {symbol_path}: {e}")
+            return True
+
+    async def fetch_historical_data(
+        self,
+        exchange: str,
+        start_date: Optional[str] = None
+    ) -> None:
+        """
+        Fetch historical data for all symbols in an exchange.
+        
+        Args:
+            exchange: Exchange to process
+            start_date: Start date for historical data (YYYY-MM-DD)
+        """
+        if exchange not in self.exchanges:
+            logger.error(f"Invalid exchange: {exchange}")
+            return
+
+        # Load exchange symbols
+        listing_file = self.base_dir / f"{exchange.lower()}_filtered_listings.json"
+        try:
+            with open(listing_file) as f:
+                listings = json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading {exchange} listings: {e}")
+            return
+
+        # Initialize progress tracking
+        await self.progress_tracker.load_progress()
+        total_symbols = len(listings)
+        completed = 0
+
+        async with self.client:
+            for listing in listings:
+                symbol = listing['symbol']
+                yahoo_symbol = self.get_yahoo_symbol(exchange, symbol)
+                output_path = self.exchanges[exchange] / f"{symbol}.json"
+
+                if not await self.should_update_historical(output_path, start_date):
+                    logger.debug(f"Skipping {symbol} - data is current")
+                    completed += 1
+                    continue
+
+                try:
+                    data = await self.client.get_history(
+                        yahoo_symbol,
+                        start_date=start_date,
+                        end_date=datetime.now().strftime('%Y-%m-%d')
+                    )
+
+                    if data:
+                        if self._atomic_write_json(output_path, data):
+                            completed += 1
+                            logger.info(f"Updated historical data for {symbol}")
+                        else:
+                            await self.progress_tracker.add_failed_symbol(exchange, symbol)
+                    else:
+                        logger.warning(f"No data returned for {symbol}")
+                        await self.progress_tracker.add_failed_symbol(exchange, symbol)
+
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                    await self.progress_tracker.add_failed_symbol(exchange, symbol)
+
+                await self.progress_tracker.update_exchange_progress(
+                    exchange,
+                    total_symbols,
+                    completed
+                )
+
+        logger.info(f"Completed {exchange}: {completed}/{total_symbols} symbols processed")
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description='Stock Data Manager')
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+
+    # Update listings command
+    update_parser = subparsers.add_parser('update-listings', help='Update stock listings')
+    update_parser.add_argument('--exchanges', nargs='+', 
+                             choices=['NYSE', 'NASDAQ', 'HKEX', 'ASX'],
+                             help='Specific exchanges to update')
+
+    # Update quotes command
+    quotes_parser = subparsers.add_parser('update-quotes', help='Update latest quotes')
+    quotes_parser.add_argument('--exchanges', nargs='+',
+                             choices=['NYSE', 'NASDAQ', 'HKEX', 'ASX'],
+                             help='Specific exchanges to update')
+
+    # Historical data command
+    historical_parser = subparsers.add_parser('fetch-historical', 
+                                            help='Fetch historical data')
+    historical_parser.add_argument('--exchanges', nargs='+',
+                                 choices=['NYSE', 'NASDAQ', 'HKEX', 'ASX'],
+                                 help='Specific exchanges to process')
+    historical_parser.add_argument('--start-date', default='2024-06-01',
+                                 help='Start date for historical data (YYYY-MM-DD)')
+
     args = parser.parse_args()
 
-    try:
-        # Configure root logger for all modules
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.DEBUG)
-        
-        # Clear any existing handlers
-        root_logger.handlers = []
-        
-        # Create formatter for consistent output
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        
-        # Create and configure stdout handler
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stdout_handler.setFormatter(formatter)
-        stdout_handler.setLevel(logging.DEBUG)
-        root_logger.addHandler(stdout_handler)
-        
-        # Initialize our module's logger
-        logger = logging.getLogger('StockScanner')
-        logging.basicConfig(
-            handlers=[stdout_handler])  # Use the same handler for basicConfig
+    if args.command == 'update-listings':
+        update_stocks.update_all_listings(args.exchanges)
+    else:
+        manager = StockQuoteManager()
 
-        logger.info('Starting the main function execution...')  # Added logging statement
-        print('Starting the main function execution...')  # Added print statement
+        if args.command == 'update-quotes':
+            # Process each selected exchange
+            for exchange in (args.exchanges or manager.exchanges.keys()):
+                try:
+                    listing_file = Path(f"data/{exchange.lower()}_filtered_listings.json")
+                    if listing_file.exists():
+                        with open(listing_file, 'r') as f:
+                            listings = json.load(f)
+                            
+                        for listing in listings:
+                            manager.update_stock_quote(listing["symbol"], exchange)
+                except Exception as e:
+                    logger.error(f"Error processing {exchange}: {str(e)}")
 
-        # Validate market argument
-        from scanner import StockScanner
-        market = args.market.upper()
-        scanner = StockScanner(None)  # Temporary instance for validation
-        if not scanner.validate_exchange(market):
-            logger.error(f"Error: Invalid market '{market}'. Valid markets are: {', '.join(scanner.VALID_EXCHANGES)}")
-            sys.exit(1)
-        del scanner  # Clean up temporary instance
+        elif args.command == 'fetch-historical':
+            # Process historical data for selected exchanges
+            for exchange in (args.exchanges or manager.exchanges.keys()):
+                asyncio.run(manager.fetch_historical_data(
+                    exchange,
+                    start_date=args.start_date
+                ))
 
-        # Load configuration
-        config = load_config(args.config)
-        logger.info("Configuration loaded successfully")
-
-        # Create necessary directories
-        Path(config.data_directory).mkdir(exist_ok=True)
-        Path(config.output_directory).mkdir(exist_ok=True)
-        Path(config.log_directory).mkdir(exist_ok=True)
-
-        # Update config to only include selected market
-        update_config_for_exchange(config, market)
-        
-        # Initialize scanner with config and strategy
-        from strategies import PriceCrossoverStrategy
-        scanner = StockScanner(config)
-        crossover_strategy = PriceCrossoverStrategy()
-        scanner.register_strategy(crossover_strategy)
-
-        logger.info('Scanner initialized with configuration and strategy.')  # Added logging statement
-
-        # Update stock data if requested
-        if args.update:
-            logger.info('Stock data update requested.')  # Added logging statement
-            await scanner.update_stock_data()
-            logger.info("Stock data update completed")
-
-        # Run scanner
-        logger.info(f"Starting market scan for {market}...")
-        await scanner.scan()
-        logger.info("Scan completed successfully")
-
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        sys.exit(1)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+if __name__ == "__main__":
+    main()
