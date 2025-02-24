@@ -462,26 +462,36 @@ class StockScanner:
         logger.info(f"Scan completed. Found {len(results)} signals.")
 
     def _save_results(self, results: List[dict], timestamp: str) -> None:
-        """Save scanning results to CSV and JSON files."""
+        """Save scanning results to a single combined JSON file."""
         if not results:
             return
 
-        # Convert to DataFrame for easier handling
-        df = pd.DataFrame(results)
-        
-        # Combine symbol and exchange, then drop separate exchange column
-        df['Symbol'] = df.apply(lambda x: f"{x['Symbol']}:{x['Exchange']}", axis=1)
-        df.drop('Exchange', axis=1, inplace=True)
-        
-        # Save as CSV
-        csv_path = self.output_dir / f"macd_signals_{timestamp}.csv"
-        df.to_csv(csv_path, index=False)
-        logger.info(f"Results saved to CSV: {csv_path}")
+        json_path = self.output_dir / "combined_macd_signals.json"
+        existing_results = []
 
-        # Save as JSON
-        json_path = self.output_dir / f"macd_signals_{timestamp}.json"
-        df.to_json(json_path, orient='records', indent=2)
-        logger.info(f"Results saved to JSON: {json_path}")
+        # Read existing results if file exists
+        if json_path.exists():
+            try:
+                with open(json_path, 'r') as f:
+                    logger.info(f"Reading existing signals from {json_path}")
+                    existing_results = json.load(f)
+                logger.debug(f"Loaded {len(existing_results)} existing results from {json_path}")
+            except json.JSONDecodeError:
+                logger.warning(f"Error reading existing results from {json_path}, starting fresh")
+        else:
+            logger.info("No existing signals file found, creating new one")
+
+        # Combine existing and new results
+        logger.debug(f"Combining {len(existing_results)} existing and {len(results)} new signals")
+        combined_results = existing_results + results
+        
+        # Save combined results
+        with open(json_path, 'w') as f:
+            logger.info(f"Writing combined signals to {json_path}")
+            json.dump(combined_results, f, indent=2)
+        logger.info(f"Successfully updated combined results file:")
+        logger.info(f"- New signals added: {len(results)}")
+        logger.info(f"- Total signals in file: {len(combined_results)}")
 
     def _get_historical_data(self, symbol: str, exchange: str, days: int = 60) -> Optional[pd.DataFrame]:
         """Get historical data for a symbol from the local data store.

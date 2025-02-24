@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+import random
 import tempfile
 import argparse
 import asyncio
@@ -11,18 +12,44 @@ import pandas as pd
 from typing import Dict, Any, Optional, List
 
 from utils.yfinance_utils import download_with_session
+from strategies.macd import MACDStrategy
 from utils.async_utils import YahooFinanceClient, UpdateProgressTracker
 import update_stocks
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('stock_update.log'),
-        logging.StreamHandler()
-    ]
-)
+class DebugConfig:
+    """Manages component-level debug settings."""
+    
+    def __init__(self):
+        self.components = {
+            'macd': False,
+            'quotes': False,
+            'historical': False,
+            'listings': False
+        }
+        
+    def enable_component(self, component: str) -> None:
+        """Enable debug logging for a specific component."""
+        if component in self.components:
+            self.components[component] = True
+            
+    def is_enabled(self, component: str) -> bool:
+        """Check if debug logging is enabled for a component."""
+        return self.components.get(component, False)
+        
+    @staticmethod
+    def setup_logging():
+        """Configure basic logging setup."""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            force=True,
+            handlers=[
+                logging.FileHandler('stock_update.log'),
+                logging.StreamHandler()
+            ]
+        )
+
+debug_config = DebugConfig()
 logger = logging.getLogger(__name__)
 
 class StockQuoteManager:
@@ -43,6 +70,20 @@ class StockQuoteManager:
         for exchange_dir in self.exchanges.values():
             exchange_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Ensured directory exists: {exchange_dir}")
+            
+    def log_symbol_info(self, exchange: str, symbol: str, component: str) -> None:
+        """Log symbol processing information if debug is enabled for component."""
+        if debug_config.is_enabled(component):
+            logger.debug(f"\nDebug info for {exchange}:{symbol}")
+            file_path = self.exchanges[exchange] / f"{symbol}.json"
+            logger.debug(f"File path: {file_path}")
+            logger.debug(f"File exists: {file_path.exists()}")
+            logger.debug(f"Yahoo symbol: {self.get_yahoo_symbol(exchange, symbol)}")
+            
+    def log_debug(self, component: str, message: str) -> None:
+        """Log debug message if enabled for component."""
+        if debug_config.is_enabled(component):
+            logger.debug(message)
 
     def _validate_quote_data(self, data: pd.DataFrame) -> bool:
         """
@@ -96,6 +137,99 @@ class StockQuoteManager:
             }
         }
 
+    def analyze_macd_signals(self, exchange: str, symbol: str) -> Optional[List[Dict]]:
+        """
+        Analyze historical data for MACD signals.
+        
+        Args:
+            exchange: Exchange code (NYSE, NASDAQ, HKEX, ASX)
+            symbol: Stock symbol
+            
+        Returns:
+            List of MACD signals if found, None if error occurs
+        """
+        try:
+            file_path = self.exchanges[exchange] / f"{symbol}.json"
+            if not file_path.exists():
+                logger.error(f"No historical data found for {symbol}")
+                return None
+
+            with open(file_path) as f:
+                self.log_debug('macd', f"Reading data for {symbol}")
+                data = json.load(f)
+                
+            # Detailed debug logging
+            if debug_config.is_enabled('macd'):
+                self.log_debug('macd', f"Data structure:")
+                self.log_debug('macd', f"Top level keys: {list(data.keys())}")
+                if 'chart' in data and data['chart']['result']:
+                    result = data['chart']['result'][0]
+                    self.log_debug('macd', f"Chart keys: {list(result.keys())}")
+            
+            # Extract raw data
+            quote_data = data['chart']['result'][0]['indicators']['quote'][0]
+            
+            # Create DataFrame with explicitly named columns
+            df = pd.DataFrame({
+                'Close': quote_data['close'],
+                'Open': quote_data['open'],
+                'High': quote_data['high'],
+                'Low': quote_data['low'],
+                'Volume': quote_data['volume']
+            })
+            df.columns = df.columns.tolist()  # Convert numpy array to list of strings
+            df.index = pd.to_datetime([datetime.fromtimestamp(x) for x in data['chart']['result'][0]['timestamp']])
+            
+            logger.info("-" * 80)
+            logger.info(f"DataFrame for {symbol}:")
+            logger.info(f"Shape: {df.shape}")
+            logger.info(f"Columns type: {type(df.columns)}")
+            logger.info(f"Column 'Close' type: {type(df['Close'])}")
+            logger.info(f"Columns: {list(df.columns)}")
+            logger.info(f"First few rows:\n{df.head()}")
+            logger.info("-" * 80)
+            
+            result = MACDStrategy().analyze(df)
+            return result
+        except Exception as e:
+            logger.error(f"Error analyzing MACD signals for {symbol}: {str(e)}\nDataFrame state: {df.columns if 'df' in locals() else 'DataFrame not created'}")
+            return None
+
+    def analyze_macd_for_last_7_days(self, exchange: str, symbol: str) -> Optional[Dict]:
+        """
+        Analyze historical data for MACD signals for the last 7 trading days and format the output.
+
+        Args:
+            exchange: Exchange code (NYSE, NASDAQ, HKEX, ASX)
+            symbol: Stock symbol
+
+        Returns:
+            Dictionary containing formatted MACD signals for the last 7 days, or None if error occurs
+        """
+        signals = self.analyze_macd_signals(exchange, symbol)
+        if not signals:
+            logger.info(f"No MACD signals found for {symbol} in the last 7 days.")
+            return None
+
+        formatted_output = {
+            "symbol": symbol,
+            "exchange": exchange,
+            "analysis_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "signals": []
+        }
+
+        for signal in signals:
+            signal_data = {
+                "signal_date": signal['SignalDate'],
+                "type": signal['Type'],
+                "price": signal['Price'],
+                "macd_value": signal['MACD'],
+                "signal_value": signal['Signal'],
+                "recommendation": signal['Type']
+            }
+            formatted_output["signals"].append(signal_data)
+
+        return formatted_output
     def _atomic_write_json(self, filepath: Path, data: Dict[str, Any]) -> bool:
         """
         Atomically write data to JSON file using a temporary file.
@@ -173,10 +307,12 @@ class StockQuoteManager:
 
     def get_yahoo_symbol(self, exchange: str, symbol: str) -> str:
         """Get Yahoo Finance formatted symbol."""
-        # if exchange == 'ASX':
-        #     return f"{symbol}.AX"
-        # elif exchange == 'HKEX':
-        #     return f"{symbol}.HK"
+        if exchange == 'ASX':
+            return f"{symbol}.AX"
+        elif exchange == 'HKEX':
+            # Remove .HK if it exists, then add it back
+            base_symbol = symbol.replace('.HK', '')
+            return f"{base_symbol}.HK"
         return symbol
 
     async def should_update_historical(self, symbol_path: Path, start_date: str) -> bool:
@@ -238,7 +374,7 @@ class StockQuoteManager:
                 output_path = self.exchanges[exchange] / f"{symbol}.json"
 
                 if not await self.should_update_historical(output_path, start_date):
-                    logger.debug(f"Skipping {symbol} - data is current")
+                    self.log_debug('historical', f"Skipping {symbol} - data is current")
                     completed += 1
                     continue
 
@@ -276,6 +412,12 @@ def main():
     parser = argparse.ArgumentParser(description='Stock Data Manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
 
+    debug_group = parser.add_argument_group('Debug Options')
+    debug_group.add_argument('--debug-macd', action='store_true', help='Enable MACD analysis debug logging')
+    debug_group.add_argument('--debug-quotes', action='store_true', help='Enable quote updates debug logging')
+    debug_group.add_argument('--debug-historical', action='store_true', help='Enable historical data debug logging')
+    debug_group.add_argument('--debug-listings', action='store_true', help='Enable listings debug logging')
+
     # Update listings command
     update_parser = subparsers.add_parser('update-listings', help='Update stock listings')
     update_parser.add_argument('--exchanges', nargs='+', 
@@ -297,7 +439,25 @@ def main():
     historical_parser.add_argument('--start-date', default='2024-06-01',
                                  help='Start date for historical data (YYYY-MM-DD)')
 
+    # MACD analysis command
+    macd_parser = subparsers.add_parser('analyze-macd',
+                                      help='Analyze stocks using MACD strategy')
+    macd_parser.add_argument('--exchanges', nargs='+',
+                          choices=['NYSE', 'NASDAQ', 'HKEX', 'ASX'],
+                          help='Specific exchanges to analyze')
+    macd_parser.add_argument('--output-dir', default='output', help='Output directory for MACD signals')
+    macd_parser.add_argument('--output', help='Output file for MACD signals')
+
     args = parser.parse_args()
+    
+    # Setup logging and debug configuration
+    DebugConfig.setup_logging()
+    
+    # Configure component-level debugging
+    if args.debug_macd: debug_config.enable_component('macd')
+    if args.debug_quotes: debug_config.enable_component('quotes')
+    if args.debug_historical: debug_config.enable_component('historical')
+    if args.debug_listings: debug_config.enable_component('listings')
 
     if args.command == 'update-listings':
         update_stocks.update_all_listings(args.exchanges)
@@ -307,11 +467,18 @@ def main():
         if args.command == 'update-quotes':
             # Process each selected exchange
             for exchange in (args.exchanges or manager.exchanges.keys()):
+                logger.info(f"\n{'='*50}\nProcessing exchange: {exchange}\n{'='*50}")
                 try:
+                    logger.debug(f"Looking for listings file: data/{exchange.lower()}_filtered_listings.json")
                     listing_file = Path(f"data/{exchange.lower()}_filtered_listings.json")
                     if listing_file.exists():
                         with open(listing_file, 'r') as f:
+                            logger.debug("Loading listings file...")
                             listings = json.load(f)
+                            logger.info(f"Found {len(listings)} symbols, first 5: {[l['symbol'] for l in listings[:5]]}")
+                        logger.info(f"Loaded {len(listings)} symbols from {listing_file}")
+                        if listings:
+                            logger.info(f"Sample symbols: {[l['symbol'] for l in listings[:5]]}")
                             
                         for listing in listings:
                             manager.update_stock_quote(listing["symbol"], exchange)
@@ -325,6 +492,75 @@ def main():
                     exchange,
                     start_date=args.start_date
                 ))
+        
+        # MACD Analysis
+        elif args.command == 'analyze-macd':
+            signals = []
+            manager.log_symbol_info('HKEX', '0001.HK', 'macd')  # Test with a known HKEX symbol
+            current_date = datetime.now().strftime('%Y%m%d')
+            logger.info("Current strategy name (case-sensitive): MACD")
+            
+            def generate_random_suffix():
+                """Generate 4-character random alphanumeric suffix."""
+                chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                return ''.join(random.choices(chars, k=4))
+                
+            # Create output directory if it doesn't exist
+            output_dir = Path(args.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            all_signals = []
+            for exchange in (args.exchanges or manager.exchanges.keys()):
+                try:
+                    exchange_signals = []
+                    listing_file = Path(f"data/{exchange.lower()}_filtered_listings.json")
+                    if listing_file.exists():
+                        with open(listing_file, 'r') as f:
+                            logger.info(f"Reading listings from {listing_file}")
+                            listings = json.load(f)
+                            manager.log_debug('macd', f"HKEX listings loaded: {len(listings)} symbols found")
+                            logger.info(f"Processing {len(listings)} symbols for {exchange}")
+
+                            for listing in listings:
+                                manager.log_debug('macd', f"Processing listing: {listing}")
+                                symbol = listing["symbol"]
+                                manager.log_debug('macd', f"Attempting to analyze MACD for {exchange}:{symbol}")
+                                macd_analysis_result = manager.analyze_macd_for_last_7_days(exchange, symbol)
+                                manager.log_debug('macd', f"MACD analysis result for {symbol}: {macd_analysis_result}")
+                                if macd_analysis_result:
+                                    logger.info(f"✓ Successfully analyzed {symbol}: Found MACD signals")
+                                    exchange_signals.append(macd_analysis_result)
+                                    signals.extend(exchange_signals)
+                                    print(f"\nMACD Signals for {exchange} - {symbol}:")
+                                    if macd_analysis_result and macd_analysis_result['signals']:
+                                        for signal in macd_analysis_result['signals']:
+                                            print(f"  Date: {signal['signal_date']}, Signal: {signal['type']}, Price: {signal['price']:.2f}")
+                                    else:
+                                        print(f"  No MACD signals found for this exchange in the last 7 days.")
+
+                except Exception as e:
+                    logger.warning(f"Non-critical error while processing {exchange} - continuing with analysis: {str(e)}")
+                    logger.debug(f"Exception details for {exchange}: {type(e).__name__}: {str(e)}")
+                    logger.debug(f"Exchange signals found before error: {len(exchange_signals) if 'exchange_signals' in locals() else 0}")
+            
+            # Write all signals to a single combined file
+            # Using format: {market}_{strategy}_{date}_{id}.json
+            market = "MULTI" if len(args.exchanges or manager.exchanges.keys()) > 1 else next(iter(args.exchanges or manager.exchanges.keys()))
+            output_path = output_dir / f"{market}_MACD_{current_date}_{generate_random_suffix()}.json"
+            with open(output_path, 'w') as f:
+                json.dump(signals, f, indent=2)
+            logger.info(f"Saved all MACD signals to {output_path}")
+            
+            # Log analysis completion
+            logger.info(f"Total signals collected across all exchanges: {len(signals)}")
+            logger.info(f"Signals list content: {signals}")
+            if not signals:
+                logger.info("\n📊 Analysis complete: No MACD signals found across any exchanges")
+            else:
+                logger.info("\n📊 Analysis Summary:")
+                logger.info(f"✓ Found {len(signals)} MACD signals across all exchanges")
+                logger.info("✓ Individual exchange signal files have been generated")
+                logger.info("✓ Check the output directory for detailed results")
 
 if __name__ == "__main__":
     main()

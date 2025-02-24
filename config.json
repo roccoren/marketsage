@@ -21,5 +21,13 @@
     },
     "dataDirectory": "data",
     "outputDirectory": "output",
-    "logDirectory": "logs"
+    "logDirectory": "logs",
+    "debug": {
+        "enabled": false,
+        "macd": false,
+        "logLevel": "INFO",
+        "logFiles": {
+            "macd": "logs/macd_strategy.log"
+        }
+    }
 }
