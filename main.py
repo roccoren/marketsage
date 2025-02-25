@@ -16,6 +16,7 @@ from strategies.strategy_rsi_stochastic import RSIStochStrategy
 from strategies.strategy_atr_moving_average import ATRMovingAverageStrategy
 from strategies.strategy_adx_macd_cci import ADXMACDCCI_Strategy
 from strategies.strategy_obv import OBVStrategy
+from utils.report_display import load_latest_report, display_analysis_report
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -74,6 +75,18 @@ async def main():
         await scanner.scan(days=60)  # Use last 60 days of data for analysis
         
         logger.info("Scan completed successfully")
+        
+        # Display the analysis report
+        try:
+            latest_report = load_latest_report(config.output_directory)
+            report_text = display_analysis_report(latest_report)
+            print("\nTRADING ANALYSIS REPORT")
+            print("=" * 80)
+            print(report_text)
+        except FileNotFoundError as e:
+            logger.error(f"Could not display trading analysis report: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error processing trading analysis report: {str(e)}")
         
     except Exception as e:
         logger.error(f"Error during scan: {str(e)}")
