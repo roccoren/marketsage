@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple, Iterator, TypedDict, Union
 import pandas as pd
 import numpy as np
 import logging
@@ -19,12 +19,210 @@ from utils.data_cleaner import clean_historical_data
 
 logger = logging.getLogger(__name__)
 
+class ExchangeConfig(TypedDict):
+    name: str
+    timezone: str
+    market_open: dt_time
+    market_close: dt_time
+    validation_symbol: str
+
+class StockData(TypedDict):
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    adjClose: float
+class SignalData(TypedDict):
+    Symbol: str
+    Exchange: str
+    Timestamp: str
+    Strategy: str
+    Signal: str
+    Confidence: float
+
 class StockScanner:
+    class MarketTimes:
+        """Helper class for market timing operations."""
+        @staticmethod
+        def get_trading_day(tz_name: str, 
+                          market_open: dt_time, 
+                          market_close: dt_time,
+                          validation_symbol: Optional[str] = None,
+                          check_data: bool = True) -> datetime:
+            """
+            Get the most recent trading day for a given market timezone.
+            
+            Args:
+                tz_name: Timezone name (e.g., 'US/Eastern', 'Australia/Sydney')
+                market_open: Market opening time
+                market_close: Market closing time
+                validation_symbol: Symbol to validate trading day against (e.g., 'SPY', 'STW.AX')
+                check_data: Whether to validate against market data
+            """
+            tz = pytz.timezone(tz_name)
+            current_time = datetime.now(tz)
+            proposed_trading_day = None
+
+            if current_time.weekday() >= 5:
+                days_to_subtract = current_time.weekday() - 4
+                last_trading = current_time - timedelta(days=days_to_subtract)
+                proposed_trading_day = last_trading.replace(hour=16, minute=0, second=0, microsecond=0)
+            elif current_time.time() < market_open:
+                last_trading = current_time - timedelta(days=1)
+                while last_trading.weekday() >= 5:
+                    last_trading -= timedelta(days=1)
+                proposed_trading_day = last_trading.replace(hour=16, minute=0, second=0, microsecond=0)
+            elif current_time.time() >= market_close:
+                proposed_trading_day = current_time.replace(hour=16, minute=0, second=0, microsecond=0)
+            else:
+                proposed_trading_day = (current_time - timedelta(days=1)).replace(
+                    hour=16, minute=0, second=0, microsecond=0
+                )
+
+            if not check_data or not validation_symbol:
+                return proposed_trading_day
+
+            try:
+                session = get_cached_session()
+                ticker = yf.Ticker(validation_symbol, session=session)
+                
+                if validation_symbol.endswith('.AX'):
+                    end_timestamp = int(proposed_trading_day.timestamp())
+                    df = ticker.history(period="5d", end=end_timestamp)
+                else:
+                    end_date = proposed_trading_day.astimezone(pytz.UTC).strftime('%Y-%m-%d')
+                    df = ticker.history(period="5d", end=end_date)
+                
+                if df.empty:
+                    logger.warning(f"No recent market data available to verify trading day for {validation_symbol}")
+                    return proposed_trading_day
+                    
+                last_actual_trading = df.index[-1].to_pydatetime().astimezone(tz)
+                return last_actual_trading.replace(hour=16, minute=0, second=0, microsecond=0)
+                
+            except Exception as e:
+                logger.error(f"Error verifying trading day against market data: {str(e)}")
+                return proposed_trading_day
+    class DataHandler:
+        """Helper class for data file operations."""
+        
+        STANDARD_COLUMNS = {
+            'close': 'Close',
+            'volume': 'Volume',
+            'adjClose': 'Adj Close',
+            'high': 'High',
+            'low': 'Low',
+            'open': 'Open'
+        }
+
+        DATE_COLUMNS = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp']
+        
+        @staticmethod
+        def _extract_data(data: Union[Dict, List]) -> Optional[List[Dict]]:
+            """Extract data from various JSON formats."""
+            if isinstance(data, dict):
+                return data.get('data') or data.get('history') or data
+            elif isinstance(data, list):
+                return data
+            return None
+
+        def __init__(self, data_dir: Path):
+            self.data_dir = data_dir
+
+        async def load_exchange_data(self, exchange: str) -> pd.DataFrame:
+            """Load stock data for a specific exchange."""
+            try:
+                file_path = self.data_dir / f"{exchange.lower()}_valid_listings.json"
+                async with aiofiles.open(file_path, 'r') as f:
+                    data = json.loads(await f.read())
+                return pd.DataFrame(data).rename(columns={"symbol": "Symbol"})
+            except FileNotFoundError:
+                logger.error(f"Exchange data file not found: {file_path}")
+                return pd.DataFrame()
+            
+        async def load_stock_data(self, file_path: Path) -> Optional[pd.DataFrame]:
+            """Load and parse stock data from a JSON file."""
+            if not file_path.exists():
+                return None
+
+            try:
+                async with aiofiles.open(file_path, 'r') as f:
+                    data = json.loads(await f.read())
+                
+                data_list = self._extract_data(data)
+                if not data_list:
+                    logger.error(f"Expected list of data points for {file_path}, got {type(data)}")
+                    return None
+                
+                df = pd.DataFrame(data_list)
+                if 'date' not in df.columns:
+                    for col in self.DATE_COLUMNS:
+                        if col in df.columns:
+                            df['date'] = df[col]
+                            break
+                    else:
+                        logger.error(f"No date column found in data for {file_path}")
+                        return None
+                
+                df = self._process_dataframe(df)
+                df = df.reindex(date_range).ffill().dropna()
+                df = df[~df.index.duplicated(keep='last')]
+
+                return df.sort_index()
+
+            except Exception as e:
+                logger.error(f"Error loading data from {file_path}: {str(e)}")
+                return None
+                
+        def _process_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+            """Process a DataFrame to standardize format and handle missing values."""
+            # Convert and set date index
+            df['Date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+            df.set_index('Date', inplace=True)
+            df = df[~df.index.duplicated(keep='last')]
+            
+            # Standardize column names
+            df.rename(columns=self.STANDARD_COLUMNS, inplace=True)
+            
+            # Create continuous date range
+            date_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='D')
+            return df
+
+        async def save_stock_data(self, file_path: Path, data: Dict[str, Any]) -> None:
+            """Save stock data to a JSON file."""
+            try:
+                async with aiofiles.open(file_path, 'w') as f:
+                    await f.write(json.dumps(data, indent=2))
+            except Exception as e:
+                logger.error(f"Error saving data to {file_path}: {str(e)}")
+                raise
+
+        def get_historical_data(self, symbol: str, exchange: str) -> Optional[dict]:
+            """Get historical data for a symbol from the local data store."""
+            try:
+                file_path = self.data_dir / exchange / f"{symbol}.json"
+                if not file_path.exists():
+                    logger.warning(f"No data file found for {symbol}")
+                    return None
+
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                    
+                return self._extract_data(data)
+                
+            except Exception as e:
+                logger.error(f"Error loading historical data for {symbol}: {str(e)}")
+                return None
+
+
     VALID_EXCHANGES = ['ASX', 'HKEX', 'NASDAQ', 'NYSE']
     
     def __init__(self, config):
         self.config = config
         self.strategies: List[Strategy] = []
+        self.data_handler: Optional[StockScanner.DataHandler] = None
         
         self._inactive_cache = {}  # Cache for failed validation attempts
         self._cache_ttl = 300  # Cache TTL in seconds (5 minutes)
@@ -33,11 +231,99 @@ class StockScanner:
             self.data_dir = Path(config.data_directory)
             self.output_dir = Path(config.output_directory)
             self.progress_tracker = UpdateProgressTracker(str(self.data_dir))
+            self.data_handler = StockScanner.DataHandler(self.data_dir)
             self.yahoo_config = config.providers.get('yahooFinance', {})
             self.circuit_breaker = CircuitBreaker(
                 failure_threshold=5,
                 reset_timeout=300  # 5 minutes
             )
+
+    class ResultsManager:
+        """Manages storage and retrieval of scan results."""
+        RESULTS_FILENAME = "combined_macd_signals.json"
+        BATCH_SIZE = 1000  # Number of results to process at once
+        
+        REQUIRED_FIELDS = {
+            'Symbol': str,
+            'Exchange': str,
+            'Timestamp': str,
+            'Strategy': str
+        }
+        
+        def __init__(self, output_dir: Path):
+            self.output_dir = output_dir
+            self.results_file = output_dir / self.RESULTS_FILENAME
+
+        def _load_existing_results(self) -> List[Dict[str, Any]]:
+            """Load existing results from file."""
+            if not self.results_file.exists():
+                logger.info("No existing signals file found")
+                return []
+
+            try:
+                with open(self.results_file, 'r') as f:
+                    logger.info(f"Reading existing signals from {self.results_file}")
+                    return json.load(f)
+            except json.JSONDecodeError:
+                logger.warning(f"Error reading existing results, starting fresh")
+                return []
+
+        def save_results(self, new_results: List[SignalData], timestamp: str) -> None:
+            """Save new results combined with existing ones."""
+            if not new_results:
+                return
+                
+            try:
+                # Validate results
+                for result in new_results:
+                    for field, field_type in self.REQUIRED_FIELDS.items():
+                        if field not in result or not isinstance(result[field], field_type):
+                            logger.warning(f"Invalid result format: missing or invalid {field}")
+                            return
+                
+                existing_results = self._load_existing_results()
+                combined_results = existing_results + new_results
+                
+                # Process in batches to handle large result sets
+                for i in range(0, len(combined_results), self.BATCH_SIZE):
+                    batch = combined_results[i:i + self.BATCH_SIZE]
+                    
+                    with open(self.results_file, 'w') as f:
+                        logger.info(f"Writing batch of signals to {self.results_file}")
+                        json.dump(batch, f, indent=2)
+                
+                logger.info("Successfully updated combined results file:")
+                logger.info(f"- New signals added: {len(new_results)}")
+                logger.info(f"- Total signals in file: {len(combined_results)}")
+            except Exception as e:
+                logger.error(f"Error saving results: {str(e)}")
+
+        def process_symbol_results(
+            self,
+            symbol: str,
+            exchange: str,
+            timestamp: str,
+            strategies: List[Strategy],
+            data: pd.DataFrame
+        ) -> List[Dict[str, Any]]:
+            """Process a symbol through all strategies and return results."""
+            results = []
+            for strategy in strategies:
+                try:
+                    signals = strategy.analyze(data)
+                    if signals:
+                        for signal in signals:
+                            signal.update({
+                                'Symbol': symbol,
+                                'Exchange': exchange,
+                                'Timestamp': timestamp,
+                                'Strategy': strategy.name
+                            
+                            })
+                            results.append(signal)
+                except Exception as e:
+                    logger.error(f"Strategy {strategy.name} failed for {symbol}: {e}")
+            return results
 
     def validate_exchange(self, exchange: str) -> bool:
         """Validate if the exchange is supported."""
@@ -163,92 +449,25 @@ class StockScanner:
         """Get the most recent trading day for US markets."""
         est = pytz.timezone('US/Eastern')
         current_time = datetime.now(est)
-        current_day = current_time.date()
-        proposed_trading_day = None
-        
-        if current_time.weekday() >= 5:
-            days_to_subtract = current_time.weekday() - 4
-            last_trading = current_time - timedelta(days=days_to_subtract)
-            proposed_trading_day = last_trading.replace(hour=16, minute=0, second=0, microsecond=0)
-            
         market_open = dt_time(9, 30)
         market_close = dt_time(16, 0)
-        current_est_time = current_time.time()
-        
-        if proposed_trading_day is None and (current_est_time < market_open or current_est_time >= market_close):
-            last_trading = current_time - timedelta(days=1)
-            proposed_trading_day = last_trading.replace(hour=16, minute=0, second=0, microsecond=0)
-        
-        if proposed_trading_day is None:
-            proposed_trading_day = current_time.replace(hour=16, minute=0, second=0, microsecond=0)
-            
-        if not check_data:
-            return proposed_trading_day
-            
-        try:
-            session = get_cached_session()
-            spy = yf.Ticker("SPY", session=session)
-            end_date = proposed_trading_day.astimezone(pytz.UTC).strftime('%Y-%m-%d')
-            df = spy.history(period="5d", end=end_date)
-            
-            if df.empty:
-                logger.warning("No recent market data available to verify trading day")
-                return proposed_trading_day
-                
-            last_actual_trading = df.index[-1].to_pydatetime().astimezone(est)
-            return last_actual_trading.replace(hour=16, minute=0, second=0, microsecond=0)
-            
-        except Exception as e:
-            logger.error(f"Error verifying trading day against market data: {str(e)}")
-            return proposed_trading_day
+        return self.MarketTimes.get_trading_day(
+            'US/Eastern',
+            market_open,
+            market_close,
+            'SPY',
+            check_data
+        )
 
-    def _get_asx_trading_day(self, check_data: bool = True) -> datetime:
+    def _get_asx_trading_day(self, check_data: bool = True) -> datetime: 
         """Get the most recent trading day for the ASX market."""
-        tz = pytz.timezone("Australia/Sydney")
-        current_time = datetime.now(tz)
-        trading_open = dt_time(10, 0)
-        trading_close = dt_time(16, 0)
-        proposed_trading_day = None
-
-        if current_time.weekday() >= 5:
-            days_to_subtract = current_time.weekday() - 4
-            last_trading = current_time - timedelta(days=days_to_subtract)
-            proposed_trading_day = last_trading.replace(hour=16, minute=0, second=0, microsecond=0)
-        elif current_time.time() < trading_open:
-            last_trading = current_time - timedelta(days=1)
-            while last_trading.weekday() >= 5:
-                last_trading -= timedelta(days=1)
-            proposed_trading_day = last_trading.replace(hour=16, minute=0, second=0, microsecond=0)
-        elif current_time.time() >= trading_close:
-            proposed_trading_day = current_time.replace(hour=16, minute=0, second=0, microsecond=0)
-        else:
-            proposed_trading_day = (current_time - timedelta(days=1)).replace(hour=16, minute=0, second=0, microsecond=0)
-
-        if not check_data:
-            return proposed_trading_day
-
-        try:
-            session = get_cached_session()
-            ticker = yf.Ticker("STW.AX", session=session)
-            end_timestamp = int(proposed_trading_day.timestamp())
-            df = ticker.history(period="5d", end=end_timestamp)
-            if df.empty:
-                logger.warning("No recent market data available to verify ASX trading day")
-                return proposed_trading_day
-            last_actual_trading = df.index[-1].to_pydatetime().astimezone(tz)
-            return last_actual_trading.replace(hour=16, minute=0, second=0, microsecond=0)
-        except Exception as e:
-            logger.error(f"Error verifying ASX trading day against market data: {str(e)}")
-            return proposed_trading_day
-
-    async def _save_stock_data(self, file_path: Path, data: Dict[str, Any]) -> None:
-        """Save stock data to a JSON file."""
-        try:
-            async with aiofiles.open(file_path, 'w') as f:
-                await f.write(json.dumps(data, indent=2))
-        except Exception as e:
-            logger.error(f"Error saving data to {file_path}: {str(e)}")
-            raise
+        return self.MarketTimes.get_trading_day(
+            'Australia/Sydney',
+            dt_time(10, 0),
+            dt_time(16, 0),
+            'STW.AX',
+            check_data
+        )
 
     async def _process_symbol(
         self,
@@ -258,7 +477,7 @@ class StockScanner:
         exchange_dir: Path,
         end_date: datetime
     ) -> bool:
-        """Process a single symbol update."""
+        """Process a single symbol update for data collection."""
         # Check cache first
         if self._is_cached_inactive(symbol) and not self._should_retry_inactive(symbol):
             logger.info(f"Skipping {symbol} (cached inactive)")
@@ -266,7 +485,7 @@ class StockScanner:
             
         try:
             file_path = exchange_dir / f"{symbol}.json"
-            existing_df = await self._load_stock_data(file_path)
+            existing_df = await self.data_handler.load_stock_data(file_path)
             start_date = None if existing_df is None else existing_df.index[-1] + timedelta(days=1)
             
             if start_date:
@@ -343,7 +562,7 @@ class StockScanner:
                 existing_data = json.loads(existing_df.to_json(orient='records', date_format='iso'))
                 data_list = existing_data + data_list
 
-            await self._save_stock_data(file_path, {'data': data_list})
+            await self.data_handler.save_stock_data(file_path, {'data': data_list})
             logger.info(f"Updated data for {symbol} ({len(data_list)} records)")
             return True
 
@@ -370,7 +589,7 @@ class StockScanner:
                 logger.info(f"Updating data for exchange: {exchange_name}")
                 
                 # Load exchange data
-                exchange_data = await self._load_exchange_data(exchange_name)
+                exchange_data = await self.data_handler.load_exchange_data(exchange_name)
                 if exchange_data.empty:
                     logger.warning(f"No symbols found for exchange: {exchange_name}")
                     continue
@@ -446,116 +665,45 @@ class StockScanner:
         """Execute the scanning process using registered strategies."""
         if self.config is None:
             raise ValueError("Scanner not properly initialized with configuration")
-            
+
         timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        results_manager = self.ResultsManager(self.output_dir)
         results = []
+        batch_size = 100  # Process symbols in batches
 
         for exchange_config in self.config.exchanges:
             exchange_name = exchange_config['name']
             logger.info(f"Processing exchange: {exchange_name}")
 
-            # Load exchange data
-            exchange_data = await self._load_exchange_data(exchange_name)
+            exchange_data = await self.data_handler.load_exchange_data(exchange_name)
             if exchange_data.empty:
                 logger.warning(f"No data found for exchange: {exchange_name}")
                 continue
 
-            # Process each symbol
-            for symbol in exchange_data['Symbol']:
-                try:
-                    # Load and clean historical data
-                    historical_data = self._get_historical_data(symbol, exchange_name, days)
-                    if historical_data is None:
-                        continue
-                        
-                    # Clean the data
-                    cleaned_data = clean_historical_data(historical_data)
-                    if cleaned_data is None:
-                        logger.warning(f"Could not clean data for {symbol}")
-                        continue
+            symbols = exchange_data['Symbol'].tolist()
+            for i in range(0, len(symbols), batch_size):
+                batch = symbols[i:i + batch_size]
+                batch_results = []
 
-                    # Apply strategies
-                    for strategy in self.strategies:
-                        try:
-                            signals = strategy.analyze(cleaned_data)
-                            if signals:
-                                for signal in signals:
-                                    signal['Symbol'] = symbol
-                                    signal['Exchange'] = exchange_name
-                                    signal['Timestamp'] = timestamp
-                                    results.append(signal)
-                        except Exception as e:
-                            logger.error(f"Strategy {strategy.name} failed for {symbol}: {e}")
-                except Exception as e:
-                    logger.error(f"Error processing {symbol}: {str(e)}")
-                    continue
+                for symbol in batch:
+                    try:
+                        historical_data = self.data_handler.get_historical_data(symbol, exchange_name)
+                        if historical_data is None:
+                            continue
 
-        # Save results
-        if results:
-            self._save_results(results, timestamp)
-        
-        logger.info(f"Scan completed. Found {len(results)} signals.")
+                        cleaned_data = clean_historical_data({'data': historical_data})
+                        if cleaned_data is None:
+                            logger.warning(f"Could not clean data for {symbol}")
+                            continue
 
-    def _save_results(self, results: List[dict], timestamp: str) -> None:
-        """Save scanning results to a single combined JSON file."""
-        if not results:
-            return
+                        symbol_results = results_manager.process_symbol_results(
+                            symbol, exchange_name, timestamp, self.strategies, cleaned_data
+                        )
+                        batch_results.extend(symbol_results)
+                    except Exception as e:
+                        logger.error(f"Error processing {symbol}: {str(e)}")
 
-        json_path = self.output_dir / "combined_macd_signals.json"
-        existing_results = []
+                results.extend(batch_results)
+                results_manager.save_results(batch_results, timestamp)
 
-        # Read existing results if file exists
-        if json_path.exists():
-            try:
-                with open(json_path, 'r') as f:
-                    logger.info(f"Reading existing signals from {json_path}")
-                    existing_results = json.load(f)
-                logger.debug(f"Loaded {len(existing_results)} existing results from {json_path}")
-            except json.JSONDecodeError:
-                logger.warning(f"Error reading existing results from {json_path}, starting fresh")
-        else:
-            logger.info("No existing signals file found, creating new one")
-
-        # Combine existing and new results
-        logger.debug(f"Combining {len(existing_results)} existing and {len(results)} new signals")
-        combined_results = existing_results + results
-        
-        # Save combined results
-        with open(json_path, 'w') as f:
-            logger.info(f"Writing combined signals to {json_path}")
-            json.dump(combined_results, f, indent=2)
-        logger.info(f"Successfully updated combined results file:")
-        logger.info(f"- New signals added: {len(results)}")
-        logger.info(f"- Total signals in file: {len(combined_results)}")
-
-    def _get_historical_data(self, symbol: str, exchange: str, days: int = 60) -> Optional[dict]:
-        """Get historical data for a symbol from the local data store.
-        
-        Args:
-            symbol: The stock symbol
-            exchange: The exchange name
-            days: Number of days of historical data to return
-            
-        Returns:
-            DataFrame with historical data or None if not available
-        """
-        try:
-            file_path = self.data_dir / exchange / f"{symbol}.json"
-            if not file_path.exists():
-                logger.warning(f"No data file found for {symbol}")
-                return None
-                
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-                
-            # Add debug logging for ASX data
-            if exchange == 'ASX':
-                logger.debug(f"Raw data for {symbol}: {str(data)[:200]}...")  # First 200 chars for brevity
-                if isinstance(data, dict):
-                    logger.debug(f"Keys in data dict: {list(data.keys())}")
-                    
-            return data
-            
-        except Exception as e:
-            logger.error(f"Error loading historical data for {symbol}: {str(e)}")
-            return None
+        logger.info(f"Scan completed. Found {len(results)} total signals.")
