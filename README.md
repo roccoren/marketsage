@@ -130,7 +130,17 @@ python main.py --update-data
 
 2. Run specific strategies:
 ```bash
-python main.py --strategies macd,rsi_stoch
+# Available strategy commands:
+python main.py --strategies macd              # MACD strategy with volume confirmation
+python main.py --strategies adx_macd_cci     # Combined ADX, MACD, and CCI strategy
+python main.py --strategies atr_ma           # ATR Moving Average strategy
+python main.py --strategies obv              # On-Balance Volume strategy
+python main.py --strategies rsi_stoch        # RSI with Stochastic strategy
+python main.py --strategies combined         # Combined signal strategy with MACD and Bollinger Bands
+python main.py --strategies crossover        # Price crossover strategy
+
+# Run multiple strategies at once:
+python main.py --strategies macd,rsi_stoch,obv
 ```
 
 3. Specify custom configuration:
