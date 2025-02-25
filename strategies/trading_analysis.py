@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 import pandas as pd
 from .base import Strategy
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,12 @@ class SignalAnalysis:
             time_part = time_part.replace('-', ':')
             return f"{date_part} {time_part}"
         self.signals['Timestamp'] = pd.to_datetime(self.signals['Timestamp'].apply(clean_ts), format='%Y-%m-%d %H:%M:%S')
+        
+        # Filter for last 7 trading days
+        last_7_days = datetime.now() - timedelta(days=7)
+        self.signals = self.signals[self.signals['Timestamp'] >= last_7_days]
+        if len(self.signals) == 0:
+            logger.warning("No signals found in the last 7 trading days")
 
     def analyze_by_strategy(self) -> Dict[str, List[Dict[str, Any]]]:
         """Group and analyze signals by strategy type"""
@@ -100,7 +107,7 @@ class TradingAnalysis:
                 "total_signals": len(signals),
                 "signals_by_type": {},
                 "average_confidence": sum(s['confidence'] for s in signals) / len(signals) if signals else 0,
-                "recent_signals": sorted(signals, key=lambda x: x['timestamp'], reverse=True)[:5]
+                "signals": sorted(signals, key=lambda x: x['timestamp'], reverse=True)  # Include all signals from last 7 days
             }
             
             # Count signals by type
@@ -152,14 +159,19 @@ class TradingAnalysis:
                 
             recommendations.append({
                 'symbol': opp['symbol'],
+                'signal_date': max(s['Timestamp'] for s in signals).strftime('%Y-%m-%d'),
                 'action': action,
                 'confidence_score': opp['confidence_score'],
                 'entry_range': {
                     'low': min(s.get('entry_price', 0) for s in signals if s.get('entry_price', 0) > 0),
                     'high': max(s.get('entry_price', 0) for s in signals if s.get('entry_price', 0) > 0)
                 } if any(s.get('entry_price', 0) > 0 for s in signals) else None,
+                'trade_timing': {
+                    'optimal_entry': 'Market open' if action == 'BUY' else 'Market close',
+                    'valid_until': (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+                },
                 'stop_loss': min(s.get('stop_loss', 0) for s in signals if s.get('stop_loss', 0) > 0) if any(s.get('stop_loss', 0) > 0 for s in signals) else None,
-                'position_size': self._calculate_position_size(opp)
+                'position_size': self._calculate_position_size(opp),
             })
             
         return recommendations
@@ -192,15 +204,18 @@ class TradingAnalysis:
     def _assess_market_conditions(self) -> Dict[str, Any]:
         """Assess current market conditions"""
         # Simplified market condition assessment based on signal patterns
-        recent_signals = pd.DataFrame(self.signals).sort_values('Timestamp', ascending=False)
-        recent_signals = recent_signals.head(100)  # Look at most recent 100 signals
+        recent_signals_df = pd.DataFrame(self.signals)
+        if 'Timestamp' not in recent_signals_df.columns or len(recent_signals_df) == 0:
+            return {"market_bias": "Neutral", "signal_strength": "Weak", "recent_signal_count": 0}
+            
+        recent_signals_df = recent_signals_df.sort_values('Timestamp', ascending=False).head(100)
         
-        buy_ratio = len(recent_signals[recent_signals['Signal'] == 'BUY']) / len(recent_signals)
+        buy_ratio = len(recent_signals_df[recent_signals_df.get('Signal', pd.Series(['UNKNOWN'] * len(recent_signals_df))) == 'BUY']) / len(recent_signals_df)
         
         return {
             "market_bias": "Bullish" if buy_ratio > 0.6 else "Bearish" if buy_ratio < 0.4 else "Neutral",
             "signal_strength": "Strong" if abs(buy_ratio - 0.5) > 0.3 else "Moderate" if abs(buy_ratio - 0.5) > 0.1 else "Weak",
-            "recent_signal_count": len(recent_signals)
+            "recent_signal_count": len(recent_signals_df)
         }
 
     def _assess_volatility(self) -> Dict[str, Any]:

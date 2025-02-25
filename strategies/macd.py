@@ -326,7 +326,7 @@ class MACDStrategy(Strategy):
     def _create_signal_dict(self, data, macd_data, volume, vol_ma, volume_ratio, 
                          price_changes, rsi, strength, signal_type,
                          historical_values, signal_date) -> Dict:
-        """Helper method to create signal dictionary."""
+        """Create detailed signal dictionary with entry/exit points."""
         price_change_1d, price_change_5d = price_changes
         return {
             'Price': float(data['Close'].iloc[-1]),
@@ -338,6 +338,16 @@ class MACDStrategy(Strategy):
             'MACD': float(macd_data['MACD'].iloc[-1]),
             'Signal': float(macd_data['Signal'].iloc[-1]),
             'Histogram': float(macd_data['Histogram'].iloc[-1]),
+            'entry_price': float(data['Close'].iloc[-1]),
+            'stop_loss': float(data['Close'].iloc[-1] * (0.95 if signal_type == SignalType.BUY else 1.05)),
+            'take_profit': float(data['Close'].iloc[-1] * (1.1 if signal_type == SignalType.BUY else 0.9)),
+            'trade_details': {
+                'optimal_entry': 'Market open' if signal_type == SignalType.BUY else 'Market close',
+                'entry_window': '1-2 trading days',
+                'stop_loss_pct': '5%',
+                'take_profit_pct': '10%',
+                'position_sizing': 'Based on volatility and signal strength'
+            },
             'History': {
                 'dates': historical_values['dates'],
                 'macd_values': historical_values['macd_values'],

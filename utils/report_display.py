@@ -38,9 +38,9 @@ def format_signal_summary(signal_summary: Dict[str, Any]) -> str:
             for signal_type, count in data['signals_by_type'].items():
                 output.append(f"  - {signal_type}: {count}")
                 
-        if data['recent_signals']:
+        if data.get('signals'):
             output.append("\nRecent Signals:")
-            recent_df = pd.DataFrame(data['recent_signals'])
+            recent_df = pd.DataFrame(data['signals'])
             output.append(tabulate(recent_df, headers='keys', tablefmt='pipe', showindex=False))
             
     return "\n".join(output)
@@ -75,24 +75,39 @@ def format_recommendations(recommendations: list) -> str:
         output.append("No trading recommendations available.")
         return "\n".join(output)
     
-    headers = ['Symbol', 'Action', 'Confidence', 'Entry Range', 'Stop Loss', 'Position Size']
+    # Main recommendation table
+    headers = ['Symbol', 'Date', 'Action', 'Confidence', 'Entry Range', 'Stop Loss', 'Take Profit']
     rows = []
     
     for rec in recommendations:
         entry_range = rec.get('entry_range')
         entry_str = f"{entry_range['low']:.2f}-{entry_range['high']:.2f}" if entry_range else "N/A"
         stop_loss = f"{rec['stop_loss']:.2f}" if rec.get('stop_loss') else "N/A"
+        take_profit = "N/A"
+        if 'trade_timing' in rec:
+            take_profit = f"{float(rec['entry_range']['high']) * 1.1:.2f}" if rec['action'] == 'BUY' else f"{float(rec['entry_range']['low']) * 0.9:.2f}"
         
         rows.append([
             rec['symbol'],
+            rec.get('signal_date', 'N/A'),
             rec['action'],
             f"{rec['confidence_score']:.2f}",
             entry_str,
             stop_loss,
-            f"{rec['position_size']:.2%}"
+            take_profit
         ])
     
     output.append(tabulate(rows, headers=headers, tablefmt='pipe'))
+
+    # Add detailed trade timing information
+    output.append("\nTrade Execution Details:")
+    for rec in recommendations:
+        if 'trade_timing' in rec:
+            output.append(f"\n{rec['symbol']}:")
+            output.append(f"- Optimal Entry Time: {rec['trade_timing']['optimal_entry']}")
+            output.append(f"- Valid Until: {rec['trade_timing']['valid_until']}")
+            output.append(f"- Position Size: {rec['position_size']:.2%}")
+    
     return "\n".join(output)
 
 def format_risk_assessment(risk_assessment: Dict[str, Any]) -> str:

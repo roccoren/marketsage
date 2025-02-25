@@ -136,6 +136,20 @@ class StockScanner:
                 logger.warning(f"Error reading existing results, starting fresh")
                 return []
 
+        def _clean_signal_data(self, signal_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Clean signal data to remove circular references and non-serializable types."""
+            cleaned_data = {}
+            for key, value in signal_data.items():
+                if isinstance(value, (str, int, float, bool)):
+                    cleaned_data[key] = value
+                elif isinstance(value, (list, tuple)):
+                    cleaned_data[key] = [str(item) if not isinstance(item, (str, int, float, bool, dict)) else item for item in value]
+                elif isinstance(value, dict):
+                    cleaned_data[key] = self._clean_signal_data(value)
+                else:
+                    cleaned_data[key] = str(value)
+            return cleaned_data
+
         def save_results(self, new_results: List[SignalData], timestamp: str) -> None:
             """Save new results combined with existing ones."""
             if not new_results:
@@ -150,7 +164,10 @@ class StockScanner:
                             return
                 
                 existing_results = self._load_existing_results()
-                combined_results = existing_results + new_results
+                
+                # Clean signal data before combining
+                cleaned_new_results = [self._clean_signal_data(result) for result in new_results]
+                combined_results = existing_results + cleaned_new_results
                 
                 # Process in batches to handle large result sets
                 for i in range(0, len(combined_results), self.BATCH_SIZE):

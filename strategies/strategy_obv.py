@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional
+from datetime import datetime, timedelta
 
 class OBVStrategy(Strategy):
     def __init__(self):
@@ -68,6 +69,11 @@ class OBVStrategy(Strategy):
         Returns:
             List of signal dictionaries or None if no signals
         """
+        # Filter for last 7 trading days
+        last_7_days = datetime.now() - timedelta(days=7)
+        data = data[data.index >= last_7_days]
+        self.logger.info(f"Analyzing last 7 days of data from {data.index[0]} to {data.index[-1]}")
+        
         # Calculate OBV
         obv = self._calculate_obv(data)
         
@@ -93,20 +99,54 @@ class OBVStrategy(Strategy):
                     current_price = float(np.array(data['Close'].iloc[-1]))
                     previous_price = float(np.array(data['Close'].iloc[-2]))
             
+            # Calculate volatility for position sizing
+            price_std = data['Close'].pct_change().std()
+            volume_ratio = data['Volume'].iloc[-1] / data['Volume'].rolling(window=20).mean().iloc[-1]
+            
+            # Calculate entry/exit levels based on recent volatility
+            volatility_window = data['High'].rolling(window=5).max() - data['Low'].rolling(window=5).min()
+            current_volatility = float(volatility_window.iloc[-1])
+            
             # Check if OBV is rising along with price trends
             if current_obv > previous_obv and current_price > previous_price:
+                entry_price = current_price
+                stop_loss = entry_price - current_volatility * 0.5
+                take_profit = entry_price + current_volatility
+                
                 signals.append({
                     "Strategy": self.name,
                     "Signal": "BUY",
+                    "Timestamp": data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
                     "Strength": "Strong",
-                    "Reason": f"Rising OBV ({current_obv:.0f} > {previous_obv:.0f}) confirms upward price trend ({current_price:.2f} > {previous_price:.2f})"
+                    "Reason": f"Rising OBV ({current_obv:.0f} > {previous_obv:.0f}) confirms upward price trend ({current_price:.2f} > {previous_price:.2f})",
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "volume_confirmation": volume_ratio > 1.0,
+                    "trade_timing": {
+                        "optimal_entry": "First hour of trading" if volume_ratio > 1.5 else "Scale in during day",
+                        "valid_until": (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+                    }
                 })
             elif current_obv < previous_obv and current_price < previous_price:
+                entry_price = current_price
+                stop_loss = entry_price + current_volatility * 0.5
+                take_profit = entry_price - current_volatility
+                
                 signals.append({
                     "Strategy": self.name,
                     "Signal": "SELL",
+                    "Timestamp": data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
                     "Strength": "Strong",
-                    "Reason": f"Falling OBV ({current_obv:.0f} < {previous_obv:.0f}) confirms downward price trend ({current_price:.2f} < {previous_price:.2f})"
+                    "Reason": f"Falling OBV ({current_obv:.0f} < {previous_obv:.0f}) confirms downward price trend ({current_price:.2f} < {previous_price:.2f})",
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "volume_confirmation": volume_ratio > 1.0,
+                    "trade_timing": {
+                        "optimal_entry": "Last hour of trading" if volume_ratio > 1.5 else "Scale in during day",
+                        "valid_until": (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+                    }
                 })
                 
         return signals if signals else None

@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional
+from datetime import datetime, timedelta
 
 class ADXMACDCCI_Strategy(Strategy):
     """Strategy combining ADX, MACD, and CCI indicators."""
@@ -111,6 +112,11 @@ class ADXMACDCCI_Strategy(Strategy):
         adx = self._calculate_adx(data)
         macd = self._calculate_macd(data)
         cci = self._calculate_cci(data)
+
+        # Filter for last 7 trading days
+        last_7_days = datetime.now() - timedelta(days=7)
+        data = data[data.index >= last_7_days]
+        self.logger.info(f"Analyzing last 7 days of data from {data.index[0]} to {data.index[-1]}")
         
         signals = []
         if not adx.empty and not macd.empty and not cci.empty:
@@ -142,21 +148,46 @@ class ADXMACDCCI_Strategy(Strategy):
                 latest_macd = float(macd.iloc[-1].values[0])
                 latest_cci = float(cci.iloc[-1].values[0])
                 
+            # Calculate entry/exit prices
+            current_price = float(data['Close'].iloc[-1])
+            atr = data['High'].rolling(window=14).max() - data['Low'].rolling(window=14).min()
+            current_atr = float(atr.iloc[-1])
+
             # Generate signals based on the indicator values
             if latest_adx > 25:  # Strong trend
                     if latest_macd > 0 and latest_cci < -100:
+                        stop_loss = current_price - current_atr
+                        take_profit = current_price + (current_atr * 2)
                         signals.append({
                             "Strategy": self.name,
                             "Signal": "BUY",
+                            "Timestamp": data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
                             "Strength": "Strong",
-                            "Reason": f"Strong trend (ADX: {latest_adx:.2f}) with positive MACD ({latest_macd:.2f}) and oversold CCI ({latest_cci:.2f})"
+                            "Reason": f"Strong trend (ADX: {latest_adx:.2f}) with positive MACD ({latest_macd:.2f}) and oversold CCI ({latest_cci:.2f})",
+                            "entry_price": current_price,
+                            "stop_loss": stop_loss,
+                            "take_profit": take_profit,
+                            "trade_timing": {
+                                "optimal_entry": "Market open next session",
+                                "valid_until": (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+                            }
                         })
                     elif latest_macd < 0 and latest_cci > 100:
+                        stop_loss = current_price + current_atr
+                        take_profit = current_price - (current_atr * 2)
                         signals.append({
                             "Strategy": self.name,
                             "Signal": "SELL",
+                            "Timestamp": data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
                             "Strength": "Strong",
-                            "Reason": f"Strong trend (ADX: {latest_adx:.2f}) with negative MACD ({latest_macd:.2f}) and overbought CCI ({latest_cci:.2f})"
+                            "Reason": f"Strong trend (ADX: {latest_adx:.2f}) with negative MACD ({latest_macd:.2f}) and overbought CCI ({latest_cci:.2f})",
+                            "entry_price": current_price,
+                            "stop_loss": stop_loss,
+                            "take_profit": take_profit,
+                            "trade_timing": {
+                                "optimal_entry": "Market close current session",
+                                "valid_until": (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+                            }
                         })
                 
         return signals if signals else None

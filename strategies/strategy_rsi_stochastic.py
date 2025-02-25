@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional
+from datetime import datetime, timedelta
 
 class RSIStochStrategy(Strategy):
     def __init__(self):
@@ -35,6 +36,11 @@ class RSIStochStrategy(Strategy):
             data = data.reindex(date_range)
         data = data.ffill()  # Forward fill missing values
         data = data.dropna()  # Drop any remaining NaN values
+        
+        # Filter for last 7 trading days
+        last_7_days = datetime.now() - timedelta(days=7)
+        data = data[data.index >= last_7_days]
+        self.logger.info(f"Analyzing last 7 days of data from {data.index[0]} to {data.index[-1]}")
         
         # Calculate RSI (14 periods)
         delta = data['Close'].diff()
@@ -71,20 +77,59 @@ class RSIStochStrategy(Strategy):
             # Convert to float to avoid Series comparison issues
             latest_rsi = float(rsi.iloc[-1])
             latest_stoch = float(d.iloc[-1])
+            current_price = float(data['Close'].iloc[-1])
+            
+            # Calculate volatility for position sizing
+            volatility = data['Close'].pct_change().std() * 100
+            avg_true_range = (data['High'] - data['Low']).rolling(window=14).mean().iloc[-1]
             
             if latest_rsi > 70 and latest_stoch > 80:
+                stop_loss = current_price * 1.02  # 2% above entry for sell signals
+                take_profit = current_price * 0.95  # 5% below entry for profit target
                 signals.append({
                     "Strategy": self.name,
                     "Signal": "SELL",
+                    "Timestamp": data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
                     "Strength": "Strong",
-                    "Reason": f"Overbought - RSI: {latest_rsi:.2f}, Stochastic: {latest_stoch:.2f}"
+                    "Reason": f"Overbought - RSI: {latest_rsi:.2f}, Stochastic: {latest_stoch:.2f}",
+                    "entry_price": current_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "risk_reward": abs(current_price - take_profit) / abs(stop_loss - current_price),
+                    "trade_timing": {
+                        "optimal_entry": "First hour of trading" if latest_stoch > 90 else "Scale in during day",
+                        "valid_until": (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d'),
+                        "suggested_sizing": f"{min(25, 100/volatility):.1f}% of normal position"
+                    },
+                    "indicators": {
+                        "RSI": latest_rsi,
+                        "Stochastic": latest_stoch,
+                        "Volatility": volatility
+                    }
                 })
             elif latest_rsi < 30 and latest_stoch < 20:
+                stop_loss = current_price * 0.98  # 2% below entry for buy signals
+                take_profit = current_price * 1.05  # 5% above entry for profit target
                 signals.append({
                     "Strategy": self.name,
                     "Signal": "BUY",
+                    "Timestamp": data.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
                     "Strength": "Strong",
-                    "Reason": f"Oversold - RSI: {latest_rsi:.2f}, Stochastic: {latest_stoch:.2f}"
+                    "Reason": f"Oversold - RSI: {latest_rsi:.2f}, Stochastic: {latest_stoch:.2f}",
+                    "entry_price": current_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "risk_reward": abs(take_profit - current_price) / abs(current_price - stop_loss),
+                    "trade_timing": {
+                        "optimal_entry": "Last hour of trading" if latest_stoch < 10 else "Scale in during day",
+                        "valid_until": (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d'),
+                        "suggested_sizing": f"{min(25, 100/volatility):.1f}% of normal position"
+                    },
+                    "indicators": {
+                        "RSI": latest_rsi,
+                        "Stochastic": latest_stoch,
+                        "Volatility": volatility
+                    }
                 })
                 
         return signals if signals else None
