@@ -2,6 +2,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Stock Scanner')
 parser.add_argument('-exchanges', type=str, nargs='+', help='List of exchanges to scan, e.g., HKEX')
+parser.add_argument('--strategies', type=str, help='Comma-separated list of strategies to use (rsi_stoch,atr_ma,adx_macd_cci,obv)')
 args = parser.parse_args()
 
 import asyncio
@@ -42,13 +43,28 @@ async def main():
         # Initialize scanner
         scanner = StockScanner(config)
         
-        # Register all strategies
-        strategies = [
-            RSIStochStrategy(),
-            ATRMovingAverageStrategy(),
-            ADXMACDCCI_Strategy(),
-            OBVStrategy()
-        ]
+        # Available strategies mapping
+        strategy_map = {
+            'rsi_stoch': RSIStochStrategy,
+            'atr_ma': ATRMovingAverageStrategy,
+            'adx_macd_cci': ADXMACDCCI_Strategy,
+            'obv': OBVStrategy
+        }
+        
+        # Initialize selected strategies or all if none specified
+        strategies = []
+        if args.strategies:
+            selected = args.strategies.split(',')
+            for strategy_name in selected:
+                if strategy_name in strategy_map:
+                    strategies.append(strategy_map[strategy_name]())
+                else:
+                    logger.warning(f"Unknown strategy: {strategy_name}")
+        else:
+            strategies = [strategy() for strategy in strategy_map.values()]
+            
+        if not strategies:
+            raise ValueError(f"No valid strategies selected. Available strategies: {', '.join(strategy_map.keys())}")
         
         for strategy in strategies:
             scanner.register_strategy(strategy)

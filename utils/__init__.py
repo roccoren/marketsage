@@ -7,9 +7,13 @@ from .async_utils import (
     UpdateProgressTracker
 )
 
+from .filename_generator import FilenameGenerator, InvalidPatternError
+
 __all__ = [
     'YahooFinanceClient',
     'TokenBucket',
     'CircuitBreaker',
-    'UpdateProgressTracker'
+    'UpdateProgressTracker',
+    'FilenameGenerator',
+    'InvalidPatternError'
 ]

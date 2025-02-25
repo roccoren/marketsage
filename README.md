@@ -1,33 +1,66 @@
 # Python Stock Scanner
 
-A Python implementation of a stock market scanner that analyzes multiple exchanges using technical indicators like MACD to identify trading opportunities.
+A sophisticated Python-based stock market scanner that analyzes multiple exchanges using various technical indicators to identify trading opportunities. The system supports asynchronous data collection, multiple trading strategies, and robust error handling.
 
 ## Features
 
-- Supports multiple exchanges (NASDAQ, NYSE, ASX)
-- MACD strategy implementation with volume confirmation
-- Configurable parameters via JSON configuration file
-- CSV and JSON output formats
-- Comprehensive logging
-- Batch processing capability
+- **Multi-Exchange Support**
+  - NASDAQ, NYSE, ASX (Australian Securities Exchange), HKEX (Hong Kong Exchange)
+  - Exchange-specific timezone handling
+  - Market hours validation
+
+- **Trading Strategies**
+  - MACD with volume confirmation
+  - ADX-MACD-CCI combined strategy
+  - ATR Moving Average strategy
+  - RSI-Stochastic strategy
+  - On-Balance Volume (OBV) analysis
+  - Support for custom strategy implementation
+
+- **Data Management**
+  - Asynchronous data collection and updates
+  - Efficient data caching and storage
+  - Automatic data cleaning and validation
+  - Progress tracking for long-running updates
+  - Circuit breaker pattern for API protection
+
+- **System Features**
+  - Configurable batch processing
+  - Comprehensive logging system
+  - Multiple output formats (JSON, CSV)
+  - Rate limiting and request throttling
+  - Error handling and recovery mechanisms
 
 ## Requirements
 
 - Python 3.8 or higher
-- Required packages listed in requirements.txt
+- Required packages:
+  ```bash
+  pandas>=1.3.0
+  numpy>=1.20.0
+  pytz>=2021.1
+  yfinance>=0.1.63
+  aiofiles>=0.8.0
+  ```
+
+Full dependencies are listed in `requirements.txt`.
 
 ## Installation
 
-1. Clone this repository
-2. Install required packages:
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd stockscanpy
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+2. Install required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Configuration
 
-Create a `config.json` file based on the example provided:
+Create a `config.json` file with the following structure:
 
 ```json
 {
@@ -37,13 +70,22 @@ Create a `config.json` file based on the example provided:
       "provider": "yahoo",
       "timezone": "America/New_York",
       "marketOpen": "09:30",
-      "marketClose": "16:00"
+      "marketClose": "16:00",
+      "validation_symbol": "SPY"
+    },
+    {
+      "name": "ASX",
+      "provider": "yahoo",
+      "timezone": "Australia/Sydney",
+      "marketOpen": "10:00",
+      "marketClose": "16:00",
+      "validation_symbol": "STW.AX"
     }
   ],
   "providers": {
     "yahooFinance": {
-      "rateLimit": 1000,
-      "batchSize": 20
+      "rateLimit": 2000,
+      "batchSize": 3
     }
   },
   "dataDirectory": "data",
@@ -52,7 +94,26 @@ Create a `config.json` file based on the example provided:
 }
 ```
 
+### Configuration Parameters
+
+- **exchanges**: Array of exchange configurations
+  - name: Exchange identifier (NASDAQ, NYSE, ASX, HKEX)
+  - timezone: Exchange timezone
+  - marketOpen/marketClose: Trading hours
+  - validation_symbol: Reference symbol for market status checks
+
+- **providers**: API provider configurations
+  - rateLimit: Milliseconds between requests
+  - batchSize: Number of symbols to process simultaneously
+
+- **directories**: Data storage locations
+  - dataDirectory: Historical data storage
+  - outputDirectory: Scan results output
+  - logDirectory: Log file location
+
 ## Usage
+
+### Basic Usage
 
 Run the scanner with default configuration:
 
@@ -60,63 +121,122 @@ Run the scanner with default configuration:
 python main.py
 ```
 
-Specify a custom configuration file:
+### Advanced Usage
 
+1. Update stock data:
 ```bash
-python main.py --config path/to/config.json
+python main.py --update-data
 ```
 
-## Output
+2. Run specific strategies:
+```bash
+python main.py --strategies macd,rsi_stoch
+```
 
-The scanner generates two types of output files in the specified output directory:
+3. Specify custom configuration:
+```bash
+python main.py --config custom_config.json
+```
 
-1. CSV file (`macd_signals_TIMESTAMP.csv`)
-2. JSON file (`macd_signals_TIMESTAMP.json`)
+### Implementing Custom Strategies
 
-Both files contain:
-- Stock Symbol
-- Current Price
-- Price Changes (1-day and 5-day)
-- Volume Information
-- MACD Components
-- Signal Strength Score
+Create a new strategy by extending the base Strategy class:
+
+```python
+from strategies.base import Strategy
+
+class CustomStrategy(Strategy):
+    def __init__(self):
+        super().__init__("CustomStrategy")
+        
+    def analyze(self, data):
+        # Implement your analysis logic here
+        return signals
+```
+
+## Output Formats
+
+### JSON Output
+Signals are saved in the following format:
+```json
+{
+  "Symbol": "AAPL",
+  "Exchange": "NASDAQ",
+  "Timestamp": "2024-02-26T10:30:00Z",
+  "Strategy": "MACD",
+  "Signal": "BUY",
+  "Confidence": 0.85
+}
+```
+
+### CSV Output
+Includes columns for:
+- Symbol
+- Exchange
+- Strategy
+- Signal Type
 - Timestamp
+- Technical Indicators
+- Price Data
+- Volume Data
 
-## Strategy Details
+## Error Handling
 
-### MACD Strategy
-- Fast EMA: 12 periods
-- Slow EMA: 26 periods
-- Signal Line: 9 periods
-- Volume confirmation: 5% above 5-day average
+The system implements several error handling mechanisms:
 
-Buy signals are generated when:
-1. MACD line is above zero
-2. MACD crosses above signal line
-3. Volume shows significant increase
+1. **Circuit Breaker**
+   - Prevents API overload
+   - Automatic retry with backoff
+   - Configurable thresholds
+
+2. **Data Validation**
+   - Market hours verification
+   - Data integrity checks
+   - Symbol validation
+
+3. **Progress Tracking**
+   - Resumable operations
+   - Failed symbol tracking
+   - Progress persistence
 
 ## Directory Structure
 
 ```
-python_stockscan/
-├── main.py
-├── scanner.py
-├── requirements.txt
-├── strategies/
-│   ├── __init__.py
-│   ├── base.py
-│   └── macd.py
-├── data/
-├── output/
-└── logs/
+stockscanpy/
+├── main.py              # Main entry point
+├── scanner.py          # Core scanner implementation
+├── config.json         # Configuration file
+├── requirements.txt    # Dependencies
+├── strategies/         # Trading strategies
+│   ├── base.py        # Base strategy class
+│   ├── macd.py        # MACD implementation
+│   └── ...            # Other strategies
+├── utils/             # Utility functions
+│   ├── async_utils.py    # Async helpers
+│   ├── data_cleaner.py  # Data processing
+│   └── ...
+├── data/              # Historical data
+├── output/            # Scan results
+└── logs/              # Log files
 ```
 
-## Error Handling
+## Logging
 
-The application includes comprehensive error handling for:
-- Configuration validation
-- File I/O operations
-- Data processing
-- Strategy execution
+Logs are stored in the configured log directory with the following information:
+- Data update progress
+- Strategy execution details
+- Error and warning messages
+- Performance metrics
 
-All errors are logged to the configured log directory.
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request with:
+   - Clear description of changes
+   - Updated tests if applicable
+   - Documentation updates
+
+## License
+
+[Your License Here]

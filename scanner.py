@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from strategies.base import Strategy
 from utils.async_utils import YahooFinanceClient, CircuitBreaker, UpdateProgressTracker
 from utils.data_cleaner import clean_historical_data
+from utils.filename_generator import FilenameGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,6 @@ class StockScanner:
 
     class ResultsManager:
         """Manages storage and retrieval of scan results."""
-        RESULTS_FILENAME = "combined_macd_signals.json"
         BATCH_SIZE = 1000  # Number of results to process at once
         
         REQUIRED_FIELDS = {
@@ -250,9 +250,16 @@ class StockScanner:
             'Strategy': str
         }
         
-        def __init__(self, output_dir: Path):
+        def __init__(self, output_dir: Path, exchange: str, strategies: List[Strategy]):
             self.output_dir = output_dir
-            self.results_file = output_dir / self.RESULTS_FILENAME
+            
+            # Generate filename using strategy names
+            generator = FilenameGenerator()
+            strategy_names = [s.name.lower().replace(' ', '_').replace('/', '_') for s in strategies]
+            filename = generator.generate_filename(
+                exchange,
+                *strategy_names)
+            self.results_file = output_dir / filename
 
         def _load_existing_results(self) -> List[Dict[str, Any]]:
             """Load existing results from file."""
@@ -667,13 +674,15 @@ class StockScanner:
             raise ValueError("Scanner not properly initialized with configuration")
 
         timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-        results_manager = self.ResultsManager(self.output_dir)
         results = []
         batch_size = 100  # Process symbols in batches
 
         for exchange_config in self.config.exchanges:
             exchange_name = exchange_config['name']
             logger.info(f"Processing exchange: {exchange_name}")
+            
+            # Create results manager for this exchange
+            results_manager = self.ResultsManager(self.output_dir, exchange_name, self.strategies)
 
             exchange_data = await self.data_handler.load_exchange_data(exchange_name)
             if exchange_data.empty:

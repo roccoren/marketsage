@@ -27,20 +27,6 @@ class MACDStrategy(Strategy):
         super().__init__(name="MACD")
         self.exchanges = ['NYSE', 'NASDAQ', 'HKEX', 'ASX']
         self.base_dir = "data"
-        """
-        Initialize MACD strategy with configurable parameters.
-        
-        Args:
-            params: Dictionary of strategy parameters
-                - fast_period (int): Fast EMA period (default: 12)
-                - slow_period (int): Slow EMA period (default: 26)
-                - signal_period (int): Signal line EMA period (default: 9)
-                - rsi_period (int): RSI calculation period (default: 14)
-                - rsi_overbought (float): RSI overbought threshold (default: 70)
-                - rsi_oversold (float): RSI oversold threshold (default: 30)
-                - volume_ma_period (int): Volume moving average period (default: 5)
-                - volume_threshold (float): Volume increase threshold (default: 1.01)
-        """
         self.params = params or {
             'fast_period': 12,
             'slow_period': 26,
@@ -132,16 +118,35 @@ class MACDStrategy(Strategy):
 
         close = pd.to_numeric(data['Close'], errors='coerce')
         delta = close.diff()
-        
-        gain = (delta.where(delta > 0, 0)).fillna(0)
-        loss = (-delta.where(delta < 0, 0)).fillna(0)
-        
+
+        # Initialize gain and loss Series as float64
+        gain = pd.Series(0.0, index=delta.index, dtype=np.float64)
+        loss = pd.Series(0.0, index=delta.index, dtype=np.float64)
+
+        # Calculate gains and losses
+        pos_mask = delta > 0
+        neg_mask = delta < 0
+        gain[pos_mask] = delta[pos_mask]
+        loss[neg_mask] = -delta[neg_mask]
+
+        # Calculate moving averages
         avg_gain = gain.ewm(com=self.params['rsi_period']-1, adjust=False).mean()
         avg_loss = loss.ewm(com=self.params['rsi_period']-1, adjust=False).mean()
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
+
+        # Initialize RS series
+        rs = pd.Series(0.0, index=avg_gain.index, dtype=np.float64)
+
+        # Calculate RS where avg_loss is not zero
+        nonzero_mask = avg_loss != 0
+        rs[nonzero_mask] = avg_gain[nonzero_mask] / avg_loss[nonzero_mask]
+
+        # When avg_loss is zero but avg_gain is not, set RS to max (100 RSI)
+        gain_only_mask = (avg_loss == 0) & (avg_gain != 0)
+        rs[gain_only_mask] = 100.0
+
+        # Calculate RSI
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+        return rsi.clip(lower=0.0, upper=100.0)
 
     def detect_recent_golden_cross(self, data: pd.DataFrame, lookback_days: int = 5) -> bool:
         """Detect if a MACD golden cross occurred within the lookback period."""
@@ -160,15 +165,19 @@ class MACDStrategy(Strategy):
             prev_signal = recent_signal.iloc[i-1]
             curr_macd = recent_macd.iloc[i]
             curr_signal = recent_signal.iloc[i]
-            
-            epsilon = 1e-10
-            if (prev_macd <= prev_signal + epsilon) and (curr_macd > curr_signal + epsilon):
+            epsilon = 1e-6  # Less strict epsilon
+
+            if debug_enabled:
+                logger.debug(f"Checking crossover: Previous (MACD: {prev_macd:.4f}, Signal: {prev_signal:.4f}), Current (MACD: {curr_macd:.4f}, Signal: {curr_signal:.4f})")
+
+            # Check if MACD crosses from below to above signal line
+            if (prev_macd < prev_signal) and (curr_macd > curr_signal):
                 if debug_enabled:
                     logger.debug(f"Golden cross detected: {curr_macd:.4f} crossed above {curr_signal:.4f}")
                 else:
                     logger.info("Golden cross detected")
                 return True
-        
+            
         if debug_enabled:
             logger.debug("No golden cross detected in lookback period")
         return False
@@ -178,10 +187,10 @@ class MACDStrategy(Strategy):
         if len(data) < self.params['slow_period'] + self.params['signal_period']:
             logger.warning("Insufficient data for MACD calculation")
             return []
-
+        
         if debug_enabled:
             logger.debug(f"Analyzing data from {data.index[0]} to {data.index[-1]}")
-
+        
         signals = []
         macd_data = self.calculate_macd(data)
         
@@ -199,7 +208,7 @@ class MACDStrategy(Strategy):
         price_change_1d = data['Close'].pct_change()
         price_change_5d = data['Close'].pct_change(periods=5)
         rsi = self.calculate_rsi(data)
-
+        
         # Get last 7 days of data
         end_date = data.index[-1]
         last_7_days = data.loc[end_date - pd.Timedelta(days=7):end_date]
