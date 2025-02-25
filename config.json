@@ -1,33 +1,24 @@
 {
-    "exchanges": [
-        {
-            "name": "ASX"
-        },
-        {
-            "name": "HKEX"
-        },
-        {
-            "name": "NASDAQ"
-        },
-        {
-            "name": "NYSE"
-        }
-    ],
-    "providers": {
-        "yahooFinance": {
-            "rateLimit": 10000,
-            "batchSize": 3
-        }
+  "data_directory": "data",
+  "output_directory": "output",
+  "exchanges": [
+    {
+      "name": "NYSE"
     },
-    "dataDirectory": "data",
-    "outputDirectory": "output",
-    "logDirectory": "logs",
-    "debug": {
-        "enabled": false,
-        "macd": false,
-        "logLevel": "INFO",
-        "logFiles": {
-            "macd": "logs/macd_strategy.log"
-        }
+    {
+      "name": "NASDAQ"
+    },
+    {
+      "name": "HKEX"
+    },
+    {
+      "name": "ASX"
     }
+  ],
+  "providers": {
+    "yahooFinance": {
+      "rateLimit": 2000,
+      "batchSize": 3
+    }
+  }
 }

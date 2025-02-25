@@ -41,3 +41,4 @@ output/*
 .AppleDouble
 .LSOverride
 ._*
+*.log

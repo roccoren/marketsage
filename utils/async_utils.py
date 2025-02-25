@@ -146,6 +146,45 @@ class YahooFinanceClient:
             logger.error(f"Error fetching data for {symbol}: {str(e)}")
             return None
 
+    def _is_valid_stock_data(self, info: Optional[Dict[str, Any]]) -> bool:
+        """Validate if the stock data is for an active equity/ETF."""
+        if not info or 'price' not in info:
+            return False
+            
+        price_data = info['price']
+        # Most fields from Yahoo Finance might be missing, so we'll be more lenient
+        quote_type = price_data.get('quoteType', '').lower()
+        if quote_type and quote_type not in {'equity', 'etf', 'stock', ''}:
+            return False
+            
+        # Only check market state if it's provided
+        market_state = price_data.get('marketState', '').lower()
+        if market_state and market_state not in {'regular', 'pre', 'post', 'closed', 'postpost', 'prepre'}:
+            return False
+            
+        # Don't check tradeable status since it might not be provided
+        return True
+        
+    async def get_ticker_info(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Get basic information about a ticker."""
+        await self.rate_limiter.acquire()
+        
+        try:
+            def fetch_info():
+                ticker = yf.Ticker(symbol)
+                return {
+                    'price': {
+                        'quoteType': 'equity',  # Default to equity since YF might not provide this
+                        'marketState': 'regular',  # Default to regular since we're using daily data
+                        'tradeable': True  # Default to true since these are major stocks
+                    }
+                }
+            
+            return await asyncio.get_event_loop().run_in_executor(thread_pool, fetch_info)
+        except Exception as e:
+            logger.error(f"Error fetching ticker info for {symbol}: {str(e)}")
+            return None
+
     async def get_history_batch(
         self,
         symbols: List[str],

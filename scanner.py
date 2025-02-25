@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 import pandas as pd
+import numpy as np
 import logging
 import time
 import pytz
@@ -14,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from strategies.base import Strategy
 from utils.async_utils import YahooFinanceClient, CircuitBreaker, UpdateProgressTracker
+from utils.data_cleaner import clean_historical_data
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +125,12 @@ class StockScanner:
                     return None
             
             # Convert date and standardize column names
-            df['Date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+            dates = pd.to_datetime(df['date'])
+            df['Date'] = dates.dt.tz_localize(None)
             df.set_index('Date', inplace=True)
+            
+            # Make index unique by keeping last value
+            df = df[~df.index.duplicated(keep='last')]
             
             # Standardize column names
             df.rename(columns={
@@ -136,7 +142,19 @@ class StockScanner:
                 'open': 'Open'
             }, inplace=True)
             
-            return df.sort_index()
+            # Sort index and handle missing values
+            df = df.sort_index()
+            
+            # Create continuous date range and forward fill missing values
+            date_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='D')
+            df = df.reindex(date_range)
+            df = df.ffill()  # Forward fill missing values
+            
+            # Drop any remaining NaN and duplicate indices
+            df = df.dropna()
+            df = df[~df.index.duplicated(keep='last')]
+            
+            return df
         except Exception as e:
             logger.error(f"Error loading data from {file_path}: {str(e)}")
             return None
@@ -258,10 +276,15 @@ class StockScanner:
             if start_date and start_date >= pd.Timestamp(end_date_utc.date(), tz=pytz.UTC):
                 return True  # Data is already up to date
 
-            yahoo_symbol = f"{symbol}.AX" if exchange_name == 'ASX' else symbol
-            
+            # Handle exchange-specific symbol formatting
+            yahoo_symbol = symbol
+            if exchange_name == 'ASX' and not symbol.endswith('.AX'):
+                yahoo_symbol = f"{symbol}.AX"
+            elif exchange_name == 'HKEX' and not symbol.endswith('.HK'):
+                yahoo_symbol = f"{symbol}.HK"
+                
             # Get basic info first
-            logger.debug(f"Fetching info for {yahoo_symbol}")
+            logger.info(f"Fetching info for {yahoo_symbol}")
             info = await self.circuit_breaker(client.get_ticker_info, yahoo_symbol)
 
             # Use YahooFinanceClient's validation logic
@@ -340,6 +363,7 @@ class StockScanner:
         
         async with YahooFinanceClient(rate_limit, batch_size) as client:
             tasks = []
+            logger.debug(f"Exchanges configuration: {self.config.exchanges}")
             
             for exchange_config in self.config.exchanges:
                 exchange_name = exchange_config['name']
@@ -438,22 +462,33 @@ class StockScanner:
 
             # Process each symbol
             for symbol in exchange_data['Symbol']:
-                historical_data = self._get_historical_data(symbol, exchange_name, days)
-                if historical_data is None:
-                    continue
+                try:
+                    # Load and clean historical data
+                    historical_data = self._get_historical_data(symbol, exchange_name, days)
+                    if historical_data is None:
+                        continue
+                        
+                    # Clean the data
+                    cleaned_data = clean_historical_data(historical_data)
+                    if cleaned_data is None:
+                        logger.warning(f"Could not clean data for {symbol}")
+                        continue
 
-                # Apply each strategy
-                for strategy in self.strategies:
-                    try:
-                        signals = strategy.analyze(historical_data)
-                        if signals:
-                            for signal in signals:
-                                signal['Symbol'] = symbol
-                                signal['Exchange'] = exchange_name
-                                signal['Timestamp'] = timestamp
-                                results.append(signal)
-                    except Exception as e:
-                        logger.error(f"Strategy {strategy.name} failed for {symbol}: {e}")
+                    # Apply strategies
+                    for strategy in self.strategies:
+                        try:
+                            signals = strategy.analyze(cleaned_data)
+                            if signals:
+                                for signal in signals:
+                                    signal['Symbol'] = symbol
+                                    signal['Exchange'] = exchange_name
+                                    signal['Timestamp'] = timestamp
+                                    results.append(signal)
+                        except Exception as e:
+                            logger.error(f"Strategy {strategy.name} failed for {symbol}: {e}")
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {str(e)}")
+                    continue
 
         # Save results
         if results:
@@ -493,7 +528,7 @@ class StockScanner:
         logger.info(f"- New signals added: {len(results)}")
         logger.info(f"- Total signals in file: {len(combined_results)}")
 
-    def _get_historical_data(self, symbol: str, exchange: str, days: int = 60) -> Optional[pd.DataFrame]:
+    def _get_historical_data(self, symbol: str, exchange: str, days: int = 60) -> Optional[dict]:
         """Get historical data for a symbol from the local data store.
         
         Args:
@@ -513,52 +548,13 @@ class StockScanner:
             with open(file_path, 'r') as f:
                 data = json.load(f)
                 
-            # Extract data array
-            if isinstance(data, dict):
-                if 'data' in data:
-                    data = data['data']
-                elif 'history' in data:
-                    data = data['history']
-            
-            if not isinstance(data, list):
-                logger.error(f"Expected list of data points for {symbol}, got {type(data)}")
-                return None
+            # Add debug logging for ASX data
+            if exchange == 'ASX':
+                logger.debug(f"Raw data for {symbol}: {str(data)[:200]}...")  # First 200 chars for brevity
+                if isinstance(data, dict):
+                    logger.debug(f"Keys in data dict: {list(data.keys())}")
                     
-            df = pd.DataFrame(data)
-            
-            # Handle date column with various possible names
-            date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp']
-            date_col = None
-            for col in date_columns:
-                if col in df.columns:
-                    date_col = col
-                    break
-                    
-            if date_col is None:
-                logger.error(f"No valid date column found for {symbol}")
-                return None
-            
-            # Convert and standardize date
-            df['Date'] = pd.to_datetime(df[date_col])
-            df.set_index('Date', inplace=True)
-            df = df[[col for col in df.columns if col != date_col]]  # Remove original date column
-            
-            # Standardize column names
-            df.rename(columns={
-                'close': 'Close',
-                'volume': 'Volume',
-                'adjClose': 'Adj Close',
-                'high': 'High',
-                'low': 'Low',
-                'open': 'Open'
-            }, inplace=True)
-            
-            # Sort and limit to requested days
-            df = df.sort_index()
-            if len(df) > days:
-                df = df.tail(days)
-                
-            return df
+            return data
             
         except Exception as e:
             logger.error(f"Error loading historical data for {symbol}: {str(e)}")
