@@ -1,7 +1,7 @@
 import argparse
 
 parser = argparse.ArgumentParser(description='Stock Scanner')
-parser.add_argument('-exchanges', type=str, nargs='+', help='List of exchanges to scan, e.g., HKEX')
+parser.add_argument('--exchanges', type=str, nargs='+', help='List of exchanges to scan, e.g., HKEX')
 parser.add_argument('--strategies', type=str, help='Comma-separated list of strategies to use (rsi_stoch,atr_ma,adx_macd_cci,obv)')
 args = parser.parse_args()
 

@@ -81,7 +81,7 @@ docker run \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/output:/app/output" \
   -v "$(pwd)/logs:/app/logs" \
-  stockscanpy -exchanges HKEX NYSE
+  stockscanpy --exchanges HKEX NYSE
 ```
 
 The container uses volume mounts to persist:
@@ -135,13 +135,13 @@ After installation, you can run the stock scanner in several ways:
 ### As an installed package:
 ```bash
 # From anywhere after installing the package
-stockscan -exchanges HKEX NYSE
+stockscan --exchanges HKEX NYSE
 ```
 
 ### From source directory:
 ```bash
 # From the project root directory
-python -m src.main -exchanges HKEX NYSE
+python -m src.main --exchanges HKEX NYSE
 ```
 
 ### With specific strategies:
