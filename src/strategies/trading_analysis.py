@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 import pandas as pd
-from .base import Strategy
+from src.strategies.base import Strategy
 import logging
 from datetime import datetime, timedelta
 

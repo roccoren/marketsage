@@ -11,12 +11,12 @@ from pathlib import Path
 import json
 from typing import List, Dict, Any
 
-from scanner import StockScanner
-from strategies.strategy_rsi_stochastic import RSIStochStrategy
-from strategies.strategy_atr_moving_average import ATRMovingAverageStrategy
-from strategies.strategy_adx_macd_cci import ADXMACDCCI_Strategy
-from strategies.strategy_obv import OBVStrategy
-from utils.report_display import load_latest_report, display_analysis_report
+from src.scanner import StockScanner
+from src.strategies.strategy_rsi_stochastic import RSIStochStrategy
+from src.strategies.strategy_atr_moving_average import ATRMovingAverageStrategy
+from src.strategies.strategy_adx_macd_cci import ADXMACDCCI_Strategy
+from src.strategies.strategy_obv import OBVStrategy
+from src.utils.report_display import load_latest_report, display_analysis_report
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

@@ -1,4 +1,4 @@
-from strategies.base import Strategy
+from src.strategies.base import Strategy
 import logging
 import pandas as pd
 import numpy as np
