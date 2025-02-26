@@ -1,4 +1,4 @@
-#!/home/roccoren/workspaces/stockscan/.venv/bin/python3
+#!/Volumes/External Data/workspaces/stockscanpy/.venv/bin/python3
 
 import datetime
 import os

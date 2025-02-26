@@ -1,4 +1,6 @@
-#!/home/roccoren/workspaces/stockscan/.venv/bin/python3
+#!/bin/sh
+'''exec' "/Volumes/External Data/workspaces/stockscanpy/.venv/bin/python3.13" "$0" "$@"
+' '''
 # -*- coding: utf-8 -*-
 import re
 import sys

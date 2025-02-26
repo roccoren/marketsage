@@ -49,10 +49,83 @@ This will install the package with all dependencies from `config/requirements.tx
 
 ### Docker Installation
 
-Build and run using Docker:
+1. Build the Docker image:
 ```bash
-docker build -t stockscan .
-docker run -v $(pwd)/data:/app/data -v $(pwd)/output:/app/output stockscan
+docker build -t stockscanpy .
+```
+
+2. Run with default settings:
+```bash
+docker run \
+  --name stockscan \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/output:/app/output" \
+  -v "$(pwd)/logs:/app/logs" \
+  stockscanpy
+```
+
+3. Run with specific trading strategies:
+```bash
+docker run \
+  --name stockscan \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/output:/app/output" \
+  -v "$(pwd)/logs:/app/logs" \
+  stockscanpy --strategies rsi_stoch,atr_ma
+```
+
+4. Run with specific exchanges:
+```bash
+docker run \
+  --name stockscan \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/output:/app/output" \
+  -v "$(pwd)/logs:/app/logs" \
+  stockscanpy -exchanges HKEX NYSE
+```
+
+The container uses volume mounts to persist:
+- `/app/data`: Stock data and cache
+- `/app/output`: Analysis reports and results
+- `/app/logs`: Application logs
+
+### Docker Environment Variables
+
+You can configure the following environment variables:
+```bash
+docker run \
+  --name stockscan \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/output:/app/output" \
+  -v "$(pwd)/logs:/app/logs" \
+  -e SCAN_DAYS=30 \
+  stockscanpy
+```
+
+Available environment variables:
+- `SCAN_DAYS`: Number of days of historical data to analyze (default: 60)
+- `DATA_DIR`: Override data directory location
+- `OUTPUT_DIR`: Override output directory location
+- `LOG_DIR`: Override logs directory location
+- `PYTHONUNBUFFERED`: Control Python output buffering
+- `PYTHONDONTWRITEBYTECODE`: Control Python bytecode generation
+
+### Docker Troubleshooting
+
+1. Permissions issues:
+```bash
+# Fix permission issues with mounted volumes
+sudo chown -R $USER:$USER data output logs
+```
+
+2. Clean restart:
+```bash
+# Remove existing container
+docker rm stockscan
+
+# Remove and rebuild image
+docker rmi stockscanpy
+docker build -t stockscanpy .
 ```
 
 ## Usage
