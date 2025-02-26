@@ -36,6 +36,9 @@ data/*
 logs/*
 output/*
 
+# Cache files
+yfinance.cache
+
 # macOS
 .DS_Store
 .AppleDouble
