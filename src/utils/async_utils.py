@@ -479,7 +479,7 @@ class YahooFinanceClient:
                             
                         # Check for an existing file
                         file_path = f"{self.data_dir}/{exchange_dir}/{symbol}.json"
-                        logger.debug(f"Checking for existing data at: {file_path}")
+                        logger.info(f"Checking for existing data at: {file_path}")
                         if os.path.exists(file_path):
                             try:
                                 # Read the JSON file
@@ -493,6 +493,7 @@ class YahooFinanceClient:
                                         # Start from the next day
                                         next_day = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
                                         symbol_start_date = next_day
+                                        result = existing_data  # Store existing data to merge later
                                         logger.info(f"Incremental update for {symbol}: fetching from {next_day} to {end_date_opt}")
                                     else:
                                         logger.warning(f"No timestamps found in existing data for {symbol}")
@@ -535,12 +536,31 @@ class YahooFinanceClient:
                             logger.error(f"History validation error for {symbol}: {e}")
                             return False
 
-                    # Transform data to history format
-                    result = self._transform_to_history_format(data)
-                    if result is None or not validate_history_format(result):
-                        logger.error(f"Invalid data structure for {symbol}")
+                    # Transform new data to history format
+                    new_data = self._transform_to_history_format(data)
+                    if new_data is None or not validate_history_format(new_data):
+                        logger.error(f"Invalid new data structure for {symbol}")
                         return symbol, None
-                        
+
+                    # If this is an incremental update and we have existing data, merge them
+                    if incremental and 'result' in locals() and result is not None:
+                        try:
+                            # Merge the history lists while maintaining chronological order
+                            combined_history = result['history'] + new_data['history']
+                            # Remove any potential duplicates based on date
+                            seen_dates = set()
+                            unique_history = []
+                            for entry in combined_history:
+                                if entry['date'] not in seen_dates:
+                                    seen_dates.add(entry['date'])
+                                    unique_history.append(entry)
+                            result['history'] = sorted(unique_history, key=lambda x: x['date'])
+                        except Exception as e:
+                            logger.error(f"Error merging data for {symbol}: {e}")
+                        return symbol, None
+                    else:
+                        result = new_data
+
                     # Additional validation check
                     if not result.get('history'):
                         logger.error(f"Missing history data for {symbol}")

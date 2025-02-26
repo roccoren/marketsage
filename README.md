@@ -149,6 +149,19 @@ python -m src.main --exchanges HKEX NYSE
 stockscan --strategies rsi_stoch,atr_ma,adx_macd_cci,obv
 ```
 
+### Usage Examples
+
+```bash
+# Update single stock: 
+python -u src/update_stocks.py --incremental --symbol AAPL
+# Update HKEX stock:
+python -u src/update_stocks.py --incremental --symbol 0700.HK
+# Update ASX stock:
+python -u src/update_stocks.py --incremental --symbol BHP.AX
+# Batch update all:
+python -u src/update_stocks.py --incremental
+```
+
 ### Available Strategies
 
 - RSI/Stochastic (rsi_stoch)
