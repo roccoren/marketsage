@@ -58,6 +58,70 @@ Full dependencies are listed in `requirements.txt`.
    pip install -r requirements.txt
    ```
 
+## Docker Support
+
+The application can be run as a containerized service using Docker.
+
+### Building the Image
+
+```bash
+docker build -t stockscanpy .
+```
+
+### Running the Container
+
+Basic usage:
+```bash
+docker run -d \
+  --name stockscanner \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/output:/app/output \
+  -v $(pwd)/logs:/app/logs \
+  stockscanpy
+```
+
+With custom strategies:
+```bash
+docker run -d \
+  --name stockscanner \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/output:/app/output \
+  -v $(pwd)/logs:/app/logs \
+  stockscanpy --strategies macd,rsi_stoch
+```
+
+### Docker Features
+
+- **Multi-stage Build**: Optimized image size using a builder stage for compilation
+- **Data Persistence**: Mounted volumes for data, output, and logs
+- **Security**:
+  - Non-root user `stockscanner`
+  - Minimal base image (python:3.11-slim)
+  - No unnecessary build dependencies in final image
+- **Environment Variables**:
+  - `DATA_DIR`: Data storage location (/app/data)
+  - `OUTPUT_DIR`: Results output location (/app/output)
+  - `LOG_DIR`: Log files location (/app/logs)
+- **Health Check**: Built-in health monitoring (30s interval)
+- **Port**: Exposes port 8080 for future API endpoints
+
+### Container Management
+
+View logs:
+```bash
+docker logs stockscanner
+```
+
+Stop container:
+```bash
+docker stop stockscanner
+```
+
+Remove container:
+```bash
+docker rm stockscanner
+```
+
 ## Configuration
 
 Create a `config.json` file with the following structure:
@@ -249,4 +313,15 @@ Logs are stored in the configured log directory with the following information:
 
 ## License
 
-[Your License Here]
+© 2025 All Rights Reserved
+
+This software is provided for evaluation and personal use only. Commercial use, modification, redistribution, or use in production environments is strictly prohibited without explicit written permission.
+
+### Restrictions
+
+- No commercial use
+- No redistribution
+- No modification or derivative works
+- No use in production environments
+
+For licensing inquiries or commercial use permission, please contact the repository owner.
