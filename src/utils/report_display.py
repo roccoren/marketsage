@@ -21,79 +21,69 @@ def load_latest_report(output_dir: str) -> Dict[str, Any]:
 def format_signal_summary(signal_summary: Dict[str, Any]) -> str:
     """Format the signal summary section with enhanced display."""
     output = []
-    output.append("\n=== TECHNICAL ANALYSIS SIGNALS ===\n")
 
     if not signal_summary:
         output.append("No signals found.")
         return "\n".join(output)
     
+    # Merge all signals from different strategies
+    all_signals = []
     for strategy, data in signal_summary.items():
         if not data.get('signals'):
             continue
+        for signal in data['signals']:
+            signal['Strategy'] = strategy
+            all_signals.append(signal)
 
-        # Convert signals to DataFrame and sort by strength
-        signals_df = pd.DataFrame(data['signals'])
-        if not signals_df.empty:
-            # Handle missing Strength values
-            if 'Strength' in signals_df.columns:
-                signals_df = signals_df.sort_values('Strength', ascending=False)
+    if not all_signals:
+        output.append("No signals found.")
+        return "\n".join(output)
 
-            # Create main signals table
-            main_table = []
-            for _, signal in signals_df.iterrows():
-                main_table.append([
-                    signal.get('symbol', 'N/A'),
-                    signal.get('Summary', 'N/A'),
-                    f"{signal.get('Price', 0):.2f}",
-                    f"{signal.get('DailyChange', 0):.2f}%",
-                    f"{signal.get('WeeklyChange', 0):.2f}%",
-                    f"{signal.get('Volume', 0):,.0f}",
-                    signal.get('Type', 'N/A'),
-                    f"{signal.get('Strength', 0):.2f}"
-                ])
+    # Convert to DataFrame and sort by strength
+    signals_df = pd.DataFrame(all_signals)
+    if not signals_df.empty:
+        # Ensure strength values are numeric
+        signals_df['strength'] = signals_df['strength'].apply(
+            lambda x: float(x) if isinstance(x, (int, float)) else 
+                     1.0 if isinstance(x, str) and x.lower() == 'strong' else 0.0
+        )
+        signals_df = signals_df.sort_values('strength', ascending=False)
 
-            output.append(tabulate(
-                main_table,
-                headers=['Symbol', 'Rating', 'Price', '1D%', '1W%', 'Volume', 'Signal', 'Strength'],
-                tablefmt='grid',
-                floatfmt='.2f'
-            ))
+        # Strong signals section
+        strong_signals = signals_df[signals_df['strength'] >= 0.7]
+        if not strong_signals.empty:
+            output.append("\n=== STRONG SIGNALS ===\n")
+            output.append(_format_signal_table(strong_signals))
 
-            # Create strategy signals table
-            output.append("\nStrategy Signals:")
-            strategy_table = []
-            for _, signal in signals_df.iterrows():
-                signals = signal.get('Signals', {})
-                strategy_table.append([
-                    signal.get('symbol', 'N/A'),
-                    signals.get('MACD', 'N/A'),
-                    signals.get('BollingerBands', 'N/A'),
-                    signals.get('Momentum', 'N/A'),
-                    signals.get('Volume', 'N/A')
-                ])
-
-            output.append(tabulate(
-                strategy_table,
-                headers=['Symbol', 'MACD', 'BB', 'Momentum', 'Volume'],
-                tablefmt='pipe'
-            ))
-
-            # Add technical details section
-            output.append("\nTechnical Details:")
-            for _, signal in signals_df.iterrows():
-                symbol = signal.get('symbol', 'N/A')
-                details = signal.get('Details', {})
-                output.append(f"\n{symbol}:")
-                
-                macd_details = details.get('MACD', {})
-                output.append(f"  MACD: {macd_details.get('MACD', 0):.3f} | Signal: {macd_details.get('Signal', 0):.3f} | Hist: {macd_details.get('Histogram', 0):.3f}")
-                
-                bb_details = details.get('BollingerBands', {})
-                output.append(f"  BB: Upper: {bb_details.get('Upper', 0):.2f} | Middle: {bb_details.get('Middle', 0):.2f} | Lower: {bb_details.get('Lower', 0):.2f}")
-                
-                output.append(f"  Momentum: {details.get('Momentum', 0):.2f}")
+        # Other signals section
+        other_signals = signals_df[signals_df['strength'] < 0.7]
+        if not other_signals.empty:
+            output.append("\n=== OTHER SIGNALS ===\n")
+            output.append(_format_signal_table(other_signals))
 
     return "\n".join(output)
+
+def _format_signal_table(signals_df: pd.DataFrame) -> str:
+    """Helper function to format signal table."""
+    table_data = []
+    for _, signal in signals_df.iterrows():
+        table_data.append([
+            signal.get('symbol', 'N/A'),
+            signal.get('Strategy', 'N/A'),
+            signal.get('Summary', 'N/A'),
+            f"{signal.get('price', 0):.2f}",
+            f"{signal.get('daily_change', 0):.2f}%",
+            f"{signal.get('weekly_change', 0):.2f}%",
+            signal.get('type', 'N/A'),
+            f"{signal.get('strength', 0):.2f}"
+        ])
+
+    return tabulate(
+        table_data,
+        headers=['Symbol', 'Strategy', 'Rating', 'Price', '1D%', '1W%', 'Type', 'Strength'],
+        tablefmt='grid',
+        floatfmt='.2f'
+    )
 
 def format_opportunities(opportunities: list) -> str:
     """Format the high-conviction opportunities section."""
@@ -246,7 +236,7 @@ def format_execution_strategy(execution_strategy: Dict[str, Any]) -> str:
                 params['trailing_stop']
             ])
         output.append(tabulate(risk_data,
-                             headers=['Symbol', 'Stop Loss', 'R:R', 'Max Loss', 'Trailing Stop'],
+                             headers=['Symbol', 'Stop Loss', 'Risk:Reward', 'Max Loss', 'Trailing Stop'],
                              tablefmt='pipe'))
     
     # Position Management
