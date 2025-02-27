@@ -246,7 +246,7 @@ class StockScanner:
         async def load_exchange_data(self, exchange: str) -> pd.DataFrame:
             """Load stock data for a specific exchange."""
             try:
-                file_path = self.data_dir / f"{exchange.lower()}_valid_listings.json"
+                file_path = self.data_dir / f"{exchange.lower()}_filtered_listings.json"
                 async with aiofiles.open(file_path, 'r') as f:
                     data = json.loads(await f.read())
                 return pd.DataFrame(data).rename(columns={"symbol": "Symbol"})

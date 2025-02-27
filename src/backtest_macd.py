@@ -25,10 +25,10 @@ Profit Factor: {metrics['profit_factor']:.2f}
 def load_symbols():
     """Load symbols from exchange listing files."""
     exchanges = {
-        'NYSE': 'data/nyse_valid_listings.json',
-        'NASDAQ': 'data/nasdaq_valid_listings.json',
-        'ASX': 'data/asx_valid_listings.json',
-        'HKEX': 'data/hk_stocks.json'
+        'NYSE': 'data/nyse_filtered_listings.json',
+        'NASDAQ': 'data/nasdaq_filtered_listings.json',
+        'ASX': 'data/asx_filtered_listings.json',
+        'HKEX': 'data/hkex_filtered_listings.json'
     }
     
     symbols = {}
