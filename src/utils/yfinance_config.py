@@ -14,5 +14,5 @@ urllib3.poolmanager.PoolManager(
 )
 
 # Set up module-level logging
-logging.getLogger("urllib3").setLevel(logging.ERROR)
-logging.getLogger("yfinance").setLevel(logging.ERROR)  # Enable debug logging for yfinance
+logging.getLogger("urllib3").setLevel(logging.INFO)
+logging.getLogger("yfinance").setLevel(logging.INFO)  # Enable debug logging for yfinance

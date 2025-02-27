@@ -9,11 +9,11 @@ import aiohttp
 import logging
 import time
 import os
+import signal
 from datetime import date, datetime, timedelta
 import re
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.cron import CronTrigger
 from utils.async_utils import YahooFinanceClient
+from contextlib import asynccontextmanager
 
 # Enhanced logging configuration
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -23,6 +23,9 @@ root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter(log_format))
+root_handler = root_logger.hasHandlers() and root_logger.handlers[0]
+if root_handler:
+    root_logger.removeHandler(root_handler)
 root_logger.addHandler(console_handler)
 
 # Add file handler
@@ -37,223 +40,305 @@ yfinance_logger = logging.getLogger('yfinance')
 yfinance_logger.setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
-logger.info("Starting stock update process")
 
-async def process_symbols_async(symbols, start_date=None, days=7, incremental=False, data_dir="data", chunk_size=200, default_start="2024-01-01", exchange_name=None):
-    """
-    Process stock symbols in parallel using optimized batch processing.
+# Global references
+loop = None
+
+class RateLimiter:
+    """Simple rate limiter for API calls."""
+    def __init__(self, calls_per_second=5):
+        self.calls_per_second = calls_per_second
+        self.minimum_interval = 1.0 / calls_per_second
+        self.last_call = 0
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        """Wait if necessary to maintain rate limit."""
+        async with self.lock:
+            now = time.time()
+            if self.last_call:
+                time_since_last = now - self.last_call
+                if time_since_last < self.minimum_interval:
+                    await asyncio.sleep(self.minimum_interval - time_since_last)
+            self.last_call = time.time()
+
+def print_progress(current, total, prefix='Progress:', suffix='Complete'):
+    """Print progress bar."""
+    length = 50
+    filled = int(length * current // total)
+    bar = '█' * filled + '-' * (length - filled)
+    percent = current / total * 100
+    print(f'\r{prefix} |{bar}| {percent:.1f}% {suffix}', end='\r')
+    if current == total:
+        print()
+
+def print_summary(exchange: str, results: dict, start_time: float):
+    """Print a formatted summary of exchange processing results."""
+    elapsed = time.time() - start_time
+    successful = len([v for v in results.values() if v])
+    total = len(results)
+    success_rate = (successful / total * 100) if total > 0 else 0
     
-    Args:
-        symbols: List of stock symbols to process
-        start_date: Start date for data retrieval in YYYY-MM-DD format
-        days: Default number of days to fetch if incremental=False
-        incremental: If True, only fetch data from last available date until now
-        data_dir: Directory where stock data is stored
-        chunk_size: Number of symbols to process in each chunk
-        default_start: Default start date for new stock files when no data exists
-        exchange_name: Name of the exchange (NYSE, NASDAQ, etc.)
-        
-    Returns:
-        Dictionary of active symbols with their market cap
-    """
-    # Create data directory if it doesn't exist
-    os.makedirs(data_dir, exist_ok=True)
-    logger.debug(f"Using data directory: {os.path.abspath(data_dir)}")
+    print("\n" + "="*80)
+    print(f"Exchange Summary: {exchange}")
+    print("="*80)
+    print(f"Total symbols processed: {total}")
+    print(f"Successfully updated:    {successful}")
+    print(f"Failed:                 {total - successful}")
+    print(f"Success rate:           {success_rate:.1f}%")
+    print(f"Time elapsed:           {elapsed:.1f} seconds")
+    print(f"Average time/symbol:    {(elapsed/total):.2f} seconds")
+    print("="*80 + "\n")
+
+    logger.info(f"\nExchange {exchange} completed:")
+    logger.info(f"Success rate: {success_rate:.1f}% ({successful}/{total})")
+    logger.info(f"Time elapsed: {elapsed:.1f}s")
+
+async def get_market_caps(client, symbols, rate_limiter):
+    """Get market caps for symbols with progress tracking."""
+    results = {}
+    total = len(symbols)
+    
+    print("\nFetching market caps...")
+    for i, symbol in enumerate(symbols):
+        try:
+            await rate_limiter.acquire()
+            info = await client.get_ticker_info(symbol)
+            market_cap = info['price'].get('marketCap') if info else None
+            results[symbol] = market_cap
+            print_progress(i + 1, total, prefix='Market Caps:', suffix='Complete')
+        except Exception as e:
+            logger.error(f"Error getting market cap for {symbol}: {e}")
+            results[symbol] = None
+    print()
+    return results
+
+async def process_exchange(exchange_name, symbols, start_date, incremental, data_dir, chunk_size=200):
+    """Process all symbols for a single exchange."""
+    if not symbols:
+        logger.info(f"No symbols to process for {exchange_name}")
+        return {}
+
+    exchange_dir = os.path.join(data_dir, exchange_name)
+    os.makedirs(exchange_dir, exist_ok=True)
     
     today = datetime.today()
     if start_date:
         try:
             start = datetime.strptime(start_date, '%Y-%m-%d')
         except ValueError:
-            raise ValueError("Invalid start date format. Please use YYYY-MM-DD format")
+            logger.error("Invalid start date format. Please use YYYY-MM-DD format")
+            return {}
     else:
-        start = datetime.strptime(default_start, '%Y-%m-%d') if incremental else today - timedelta(days=days)
-    active_statuses = {}
+        start = today - timedelta(days=365)
+
+    logger.info(f"\nProcessing {exchange_name}:")
+    logger.info(f"Symbols: {len(symbols)}")
+    logger.info(f"Period:  {start.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}")
     
-    # Process symbols in memory-efficient chunks
-    total_chunks = (len(symbols) + chunk_size - 1) // chunk_size
-    logger.info(f"Processing {len(symbols)} symbols in {total_chunks} chunks of size {chunk_size}")
+    chunk_results = {}
+    process_start_time = time.time()
+    rate_limiter = RateLimiter(calls_per_second=5)
+    client = None
     
-    # Create a single client instance for reuse
-    client = YahooFinanceClient(data_dir=data_dir, exchange=exchange_name)
-    async with client as session:
-        tasks = []
+    try:
+        client = YahooFinanceClient(data_dir=exchange_dir)
+        await client.__aenter__()
+        total_processed = 0
+        
         for i in range(0, len(symbols), chunk_size):
             chunk = symbols[i:i + chunk_size]
             chunk_num = i // chunk_size + 1
-            logger.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} symbols)")
+            total_chunks = (len(symbols) + chunk_size - 1) // chunk_size
             
-            # Create task for each chunk
-            tasks.append(
-                client.get_history_batch(
-                    chunk,
-                    start_date=start.strftime('%Y-%m-%d') if not incremental else None,
-                    end_date=today.strftime('%Y-%m-%d'),
-                    incremental=incremental
-                )
-            )
+            for attempt in range(3):  # Max 3 retries
+                try:
+                    await rate_limiter.acquire()
+                    result = await client.get_history_batch(
+                        chunk,
+                        start_date=start.strftime('%Y-%m-%d') if not incremental else None,
+                        end_date=today.strftime('%Y-%m-%d'),
+                        incremental=incremental
+                    )
+                    if result:
+                        chunk_results.update(result)
+                        total_processed += len(result)
+                        print_progress(total_processed, len(symbols), 
+                                     prefix=f'{exchange_name} Progress:')
+                        break
+                    elif attempt == 2:  # Last attempt
+                        logger.error(f"Failed to process chunk {chunk_num}/{total_chunks}")
+                    else:
+                        wait_time = (2 ** attempt) + 1
+                        logger.info(f"Retrying chunk {chunk_num} in {wait_time}s")
+                        await asyncio.sleep(wait_time)
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error(f"Error processing chunk {chunk_num}: {str(e)}")
+                    await asyncio.sleep((2 ** attempt) + 1)
+
+        if not chunk_results:
+            logger.error(f"No successful results for {exchange_name}")
+            return {}
+
+        # Get market caps with separate progress tracking
+        active_statuses = await get_market_caps(
+            client,
+            [s for s, d in chunk_results.items() if d is not None],
+            rate_limiter
+        )
+
+        print_summary(exchange_name, chunk_results, process_start_time)
+        return active_statuses
         
-        # Process all chunks concurrently
-        chunk_results = await asyncio.gather(*tasks)
-        
-        # Merge results from all chunks
-        active_statuses = {}
-        for results in chunk_results:
-            if results:
-                for symbol, data in results.items():
-                    if data is not None:
-                        # Get market cap for valid symbols
-                        info = await client.get_ticker_info(symbol)
-                        market_cap = info['price'].get('marketCap') if info else None
-                        active_statuses[symbol] = market_cap
-    
-    return active_statuses
+    except Exception as e:
+        logger.error(f"Error processing {exchange_name}: {e}")
+        return {}
+    finally:
+        if client:
+            try:
+                await client.__aexit__(None, None, None)
+            except:
+                pass
+            await asyncio.sleep(1)  # Ensure cleanup completes
 
 async def update_all_listings(exchanges=None, incremental=False, start_date=None, symbol=None):
-    """
-    Update stock listings for specified exchanges.
-    
-    Args:
-        exchanges (list): List of exchanges to update. If None, updates all exchanges.
-        incremental (bool): If True, only fetch data since the last update
-        start_date (str): Start date for data retrieval in YYYY-MM-DD format
-        symbol (str): If provided, only update this specific symbol
-    """
-    # If a specific symbol is provided, directly process it without validation
+    """Update stock listings for specified exchanges."""
     if symbol:
-        logging.info(f"Processing single symbol: {symbol}")
-        results = await process_symbols_async([symbol], start_date=start_date, incremental=incremental)
+        logger.info(f"Processing single symbol: {symbol}")
+        results = await process_exchange("UNKNOWN", [symbol], start_date, incremental, "data")
         return len(results) > 0
 
-    # For bulk processing, continue with exchange-based processing
     all_exchanges = {
         'NYSE': 'data/nyse_filtered_listings.json',
         'NASDAQ': 'data/nasdaq_filtered_listings.json',
-        'HKEX': 'data/hkex_filtered_listings.json',
         'ASX': 'data/asx_filtered_listings.json'
     }
     
     exchanges_to_process = exchanges if exchanges else all_exchanges.keys()
-    logging.info(f"Starting {'incremental' if incremental else 'full'} update of stock listings for: {', '.join(exchanges_to_process)}")
+    logger.info(f"Starting {'incremental' if incremental else 'full'} update for: "
+               f"{', '.join(exchanges_to_process)}")
     
-    # Ensure data directories exist
-    for exchange in exchanges_to_process:
-        os.makedirs(f"data/{exchange}", exist_ok=True)
-
     results = {}
-    for exchange in exchanges_to_process:
-        if exchange in all_exchanges:
+    success = True
+    overall_start_time = time.time()
+    
+    try:
+        for exchange in exchanges_to_process:
             try:
-                # Load and validate filtered listings for each exchange
                 filtered_file = all_exchanges[exchange]
-                with open(filtered_file, 'r') as f:
+                if not os.path.exists(filtered_file):
+                    logger.error(f"Missing filtered listings file: {filtered_file}")
+                    continue
+
+                with open(filtered_file, 'r', encoding='utf-8') as f:
                     listings = json.load(f)
+                    logger.info(f"Loaded {len(listings)} symbols from {filtered_file}")
                     
                 symbols = [listing['symbol'] for listing in listings]
-                active_statuses = await process_symbols_async(symbols, start_date=start_date, incremental=incremental)
+                active_statuses = await process_exchange(exchange, symbols, start_date, incremental, "data")
                 
-                # Update market caps
-                updated_listings = []
-                for listing in listings:
-                    if listing['symbol'] in active_statuses:
-                        listing['market_cap'] = active_statuses[listing['symbol']]
-                        updated_listings.append(listing)
+                if active_statuses:
+                    updated_listings = []
+                    for listing in listings:
+                        if listing['symbol'] in active_statuses:
+                            listing['market_cap'] = active_statuses[listing['symbol']]
+                            updated_listings.append(listing)
+                    
+                    with open(filtered_file, 'w', encoding='utf-8') as f:
+                        json.dump(updated_listings, f, indent=4)
+                    
+                    results[exchange] = True
+                else:
+                    results[exchange] = False
+                    success = False
+                    logger.error(f"No active statuses returned for {exchange}")
                 
-                # Save updated listings
-                with open(filtered_file, 'w') as f:
-                    json.dump(updated_listings, f, indent=4)
+                # Ensure proper cleanup between exchanges
+                await asyncio.sleep(5)
                 
-                results[exchange] = True
-                logging.info(f"Successfully updated {len(updated_listings)} listings for {exchange}")
-                
-            except FileNotFoundError:
-                logging.error(f"Filtered listings file not found for {exchange}")
-                results[exchange] = False
-            except json.JSONDecodeError:
-                logging.error(f"Invalid JSON format in filtered listings for {exchange}")
-                results[exchange] = False
             except Exception as e:
-                logging.error(f"Error processing {exchange}: {str(e)}")
+                logger.error(f"Error processing {exchange}: {str(e)}", exc_info=True)
                 results[exchange] = False
-        else:
-            logging.error(f"Unknown exchange: {exchange}")
-            results[exchange] = False
+                success = False
+                
+    except asyncio.CancelledError:
+        logger.info("Update process cancelled")
+        raise
+    finally:
+        total_time = time.time() - overall_start_time
+        logger.info(f"\nProcess completed in {total_time:.1f} seconds")
+        logger.info(f"Results: {results}")
     
-    # Log overall status
-    status = all(results.values())
-    if status:
-        logging.info(f"Successfully updated stock listings for: {', '.join(exchanges_to_process)}")
-    else:
-        logging.error("Some exchanges failed to update, check logs for details")
-    
-    return status
+    return success
 
-def sync_update_all_listings(exchanges=None, incremental=False, start_date=None, symbol=None):
-    """Synchronous wrapper for update_all_listings."""
-    loop = None
+def signal_handler(sig, frame):
+    """Handle interrupt signals gracefully."""
+    global loop
+    logger.info("Received interrupt signal, cleaning up...")
+    if loop and loop.is_running():
+        loop.stop()
+    raise KeyboardInterrupt
+
+def main(exchanges=None, incremental=False, start_date=None, symbol=None):
+    """Main entry point with proper asyncio handling."""
+    global loop
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        return loop.run_until_complete(update_all_listings(exchanges, incremental, start_date, symbol))
+        
+        return loop.run_until_complete(
+            update_all_listings(exchanges, incremental, start_date, symbol)
+        )
+    except KeyboardInterrupt:
+        logger.info("Update process stopped by user")
+        return False
     except Exception as e:
-        logging.error(f"Error during update: {e}")
+        logger.error(f"Error during update: {e}")
         return False
     finally:
-        # Clean up if we created a new loop
-        if loop and not loop.is_running():
-            loop.close()
+        try:
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            
+            if loop and loop.is_running():
+                loop.stop()
+            if not loop.is_closed():
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 if __name__ == "__main__":
     try:
         os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"  # Required for macOS
         
-        # Set up command line arguments
         parser = argparse.ArgumentParser(
             description='Update stock listings from various exchanges',
             formatter_class=argparse.RawTextHelpFormatter
         )
-        parser.add_argument('--exchanges', nargs='+', choices=['NYSE', 'NASDAQ', 'HKEX', 'ASX'],
-                          help='Specify exchanges to update (e.g., NYSE NASDAQ). If not specified, updates all exchanges')
+        parser.add_argument('--exchanges', nargs='+', choices=['NYSE', 'NASDAQ', 'ASX'],
+                          help='Specify exchanges to update (e.g., NYSE NASDAQ)')
         parser.add_argument('--incremental', action='store_true', 
-                          help='Only fetch data since the last available date (incremental update)')
+                          help='Only fetch data since the last available date')
         parser.add_argument('--start-date', type=str, 
-                          help='Start date for data retrieval (format: YYYY-MM-DD)\nExample: python -u src/update_stocks.py --exchanges HKEX --start-date 2024-01-01')
+                          help='Start date for data retrieval (format: YYYY-MM-DD)')
         parser.add_argument('--symbol', type=str,
-                          help='Update a specific stock symbol\nExample: python -u src/update_stocks.py --incremental --symbol AAPL')
+                          help='Update a specific stock symbol')
         args = parser.parse_args()
         
         if args.start_date and args.incremental:
-            logging.error("Cannot use both --start-date and --incremental options")
+            logger.error("Cannot use both --start-date and --incremental options")
             exit(1)
-        
-        # Set start date to 2024-01-01 for new stocks in incremental mode
-        if args.incremental and not args.start_date:
-            if not args.symbol:
-                logger.info("Using 2024-01-01 as start date for new stocks in incremental mode")
-        
-        # Initial update
-        sync_update_all_listings(args.exchanges, args.incremental, args.start_date, args.symbol)
-        
-        if not args.symbol:  # Only schedule updates if not processing a single symbol
-            if not args.exchanges:
-                logging.info("No specific exchanges selected, will schedule updates for all exchanges")
-            else:
-                logging.info(f"Scheduling updates for exchanges: {', '.join(args.exchanges)}")
-
-            # Schedule daily updates (run at 00:00 local time)
-            scheduler = BlockingScheduler()
-            scheduler.add_job(
-                sync_update_all_listings,
-                CronTrigger(hour=0, minute=0),
-                args=[args.exchanges, True],  # Always use incremental updates for scheduled jobs
-                id='stock_update',
-                max_instances=1,
-                replace_existing=True
-            )
-            logging.info("Starting scheduler for daily updates")
-            scheduler.start()
+            
+        main(args.exchanges, args.incremental, args.start_date, args.symbol)
         
     except KeyboardInterrupt:
-        logging.info("Scheduler stopped by user")
+        logger.info("Process terminated by user")
     except Exception as e:
-        logging.error(f"Scheduler error: {e}")
+        logger.error(f"Process error: {e}")
+        exit(1)

@@ -39,7 +39,7 @@ def configure_logging(
         if log_file:
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
             file_handler = logging.FileHandler(log_file)
-            file_handler.setLevel(logging.DEBUG)
+            file_handler.setLevel(logging.INFO)
             file_handler.setFormatter(file_formatter)
             logger.addHandler(file_handler)
         

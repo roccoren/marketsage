@@ -7,7 +7,7 @@ import logging
 import json
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Enable debug logging
+logger.setLevel(logging.INFO)  # Enable debug logging
 
 class CachedSession(CacheMixin, Session):
     """A requests Session with caching capability."""
