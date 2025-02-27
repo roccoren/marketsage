@@ -36,7 +36,7 @@ logging.getLogger().addHandler(file_handler)
 logger = logging.getLogger(__name__)
 logger.info("Starting stock update process")
 
-async def process_symbols_async(symbols, start_date=None, days=7, incremental=False, data_dir="data", chunk_size=100, default_start="2024-01-01"):
+async def process_symbols_async(symbols, start_date=None, days=7, incremental=False, data_dir="data", chunk_size=200, default_start="2024-01-01", exchange_name=None):
     """
     Process stock symbols in parallel using optimized batch processing.
     
@@ -48,6 +48,7 @@ async def process_symbols_async(symbols, start_date=None, days=7, incremental=Fa
         data_dir: Directory where stock data is stored
         chunk_size: Number of symbols to process in each chunk
         default_start: Default start date for new stock files when no data exists
+        exchange_name: Name of the exchange (NYSE, NASDAQ, etc.)
         
     Returns:
         Dictionary of active symbols with their market cap
@@ -70,30 +71,46 @@ async def process_symbols_async(symbols, start_date=None, days=7, incremental=Fa
     total_chunks = (len(symbols) + chunk_size - 1) // chunk_size
     logger.info(f"Processing {len(symbols)} symbols in {total_chunks} chunks of size {chunk_size}")
     
+    # Create a single client instance for reuse
+    client = YahooFinanceClient(data_dir=data_dir, exchange=exchange_name)
+    async with client as session:
+        tasks = []
+        for i in range(0, len(symbols), chunk_size):
+            chunk = symbols[i:i + chunk_size]
+            chunk_num = i // chunk_size + 1
+            logger.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} symbols)")
+            
+            # Create task for each chunk
+            tasks.append(
+                client.get_history_batch(
+                    chunk,
+                    start_date=start.strftime('%Y-%m-%d') if not incremental else None,
+                    end_date=today.strftime('%Y-%m-%d'),
+                    incremental=incremental
+                )
+            )
+        
+        # Process all chunks concurrently
+        chunk_results = await asyncio.gather(*tasks)
+        
+        # Merge results from all chunks
+        active_statuses = {}
+        for results in chunk_results:
+            if results:
+                for symbol, data in results.items():
+                    if data is not None:
+                        # Get market cap for valid symbols
+                        info = await client.get_ticker_info(symbol)
+                        market_cap = info['price'].get('marketCap') if info else None
+                        active_statuses[symbol] = market_cap
+    
+    return active_statuses
+
+async def process_hkex(file_path, incremental=False, start_date=None, symbol_filter=None):
     for i in range(0, len(symbols), chunk_size):
         chunk = symbols[i:i + chunk_size]
         chunk_num = i // chunk_size + 1
         logger.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} symbols)")
-        
-        # Use optimized client with dynamic batch sizing
-        async with YahooFinanceClient(data_dir=data_dir) as client:
-            # Get historical data for chunk
-            results = await client.get_history_batch(
-                chunk,
-                start_date=start.strftime('%Y-%m-%d') if not incremental else None,
-                end_date=today.strftime('%Y-%m-%d'),
-                incremental=incremental
-            )
-            
-            # Process results
-            for symbol, data in results.items():
-                if data is not None:  # If we got valid data
-                    # Get market cap for valid symbols
-                    info = await client.get_ticker_info(symbol)
-                    market_cap = info['price'].get('marketCap') if info else None
-                    active_statuses[symbol] = market_cap
-    
-    return active_statuses
 
 async def process_nyse_nasdaq(file_path, exchange_name, incremental=False, start_date=None, symbol_filter=None):
     try:
@@ -129,7 +146,7 @@ async def process_nyse_nasdaq(file_path, exchange_name, incremental=False, start
             logging.warning(f"No matching symbols found in {exchange_name}")
             return False
 
-        active_statuses = await process_symbols_async(symbols_to_check, start_date=start_date, incremental=incremental)
+        active_statuses = await process_symbols_async(symbols_to_check, start_date=start_date, incremental=incremental, exchange_name=exchange_name)
         with open(file_path, mode='r', encoding='utf-8') as csvfile:
             csv_reader = csv.DictReader(csvfile)
             for row in csv_reader:
@@ -332,7 +349,7 @@ async def update_all_listings(exchanges=None, incremental=False, start_date=None
             elif exchange == 'HKEX':
                 results[exchange] = await handler('data/hk_stocks_20250218_015522.csv', incremental, start_date, symbol)
             else:  # ASX
-                results[exchange] = handler('data/asx_valid_listings.json', incremental, start_date, symbol)
+                results[exchange] = await handler('data/asx_valid_listings.json', incremental, start_date, symbol)
         else:
             logging.error(f"Unknown exchange: {exchange}")
             results[exchange] = False

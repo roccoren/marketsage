@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 yf.set_tz_cache_location("./data/yfinance_cache")
 
 # Global thread pool for yfinance operations with optimal size
-thread_pool = ThreadPoolExecutor(max_workers=20)
+thread_pool = ThreadPoolExecutor(max_workers=max(30, cpu_count() * 4))
 
 class TokenBucket:
     """Token bucket rate limiter for controlling request rates."""
@@ -92,31 +92,31 @@ class CircuitBreaker:
 class YahooFinanceClient:
     """Optimized async client for Yahoo Finance API."""
     
-    def __init__(self, rate_limit_ms: int = 2000, batch_size: int = None, data_dir: str = None):
+    def __init__(self, rate_limit_ms: int = 2000, batch_size: int = None, data_dir: str = None, exchange: str = None):
         # Dynamic batch size based on system resources
         if batch_size is None:
             # Use CPU count to determine optimal batch size
             optimal_batch = cpu_count() * 2
-            self.batch_size = min(30, max(8, optimal_batch))  # Cap between 8 and 30
+            self.batch_size = min(50, max(16, optimal_batch))  # Increased caps
         else:
-            self.batch_size = min(batch_size, 30)  # Maintain upper limit
+            self.batch_size = min(batch_size, 50)  # Increased upper limit
 
-        self.rate_limiter = TokenBucket(max(rate_limit_ms, 1000), 10)  # Adjusted token capacity
+        self.rate_limiter = TokenBucket(max(rate_limit_ms, 500), 20)  # Increased concurrency
         self.session: Optional[aiohttp.ClientSession] = None
         self.data_dir = data_dir
+        self.exchange = exchange
         if self.data_dir:
             logger.info(f"Data will be stored in: {self.data_dir}")
         self._lock = asyncio.Lock()
         self.circuit_breaker = CircuitBreaker()
-        self.data_dir = data_dir
         self.chunk_size = 1000  # Number of rows to process at once
         
     async def __aenter__(self):
         if not self.session:
             # Optimize connection pooling and enable keepalive with increased limits
             connector = TCPConnector(
-                limit=50,  # Match urllib3's DEFAULT_POOLSIZE
-                limit_per_host=10,  # Reduce per-host limit
+                limit=100,  # Increased connection pool
+                limit_per_host=20,  # Increased per-host limit
                 ttl_dns_cache=300,  # Cache DNS results for 5 minutes
                 use_dns_cache=True,
                 keepalive_timeout=120  # Keep connections alive for 2 minutes
@@ -173,6 +173,12 @@ class YahooFinanceClient:
             if len(base_symbol) < 4:
                 base_symbol = base_symbol.zfill(4)
             return f"{base_symbol}.HK"
+            
+        # Fix ASX symbols that may have duplicate .AX suffix
+        if '.AX' in symbol:
+            # Extract base symbol without any .AX suffixes
+            base_symbol = symbol.split('.')[0]
+            return f"{base_symbol}.AX"
         
         return symbol
             
@@ -464,19 +470,21 @@ class YahooFinanceClient:
                     # Clean symbol format
                     clean_symbol = self._clean_symbol(symbol)
                     
+                    # Determine exchange directory
+                    exchange_dir = None
+                    if symbol.endswith('.HK'):
+                        exchange_dir = 'HKEX'
+                    elif symbol.endswith('.AX'):
+                        exchange_dir = 'ASX'
+                    else:
+                        # For NYSE/NASDAQ stocks, use the exchange specified in constructor
+                        if not self.exchange:
+                            raise ValueError("Exchange must be specified for NYSE/NASDAQ stocks")
+                        exchange_dir = self.exchange
+
                     # Check for existing data if incremental mode is enabled and we have a data directory
                     symbol_start_date = start_date
                     if incremental and self.data_dir:
-                        # Determine exchange prefix (HKEX, NYSE, ASX, NASDAQ)
-                        exchange_dir = None
-                        if symbol.endswith('.HK'):
-                            exchange_dir = 'HKEX'
-                        elif symbol.endswith('.AX'):
-                            exchange_dir = 'ASX'
-                        else:
-                            # For NYSE/NASDAQ (no suffix)
-                            exchange_dir = 'NYSE' if '.' not in symbol else 'NASDAQ'
-                            
                         # Check for an existing file
                         file_path = f"{self.data_dir}/{exchange_dir}/{symbol}.json"
                         logger.info(f"Checking for existing data at: {file_path}")
@@ -513,7 +521,7 @@ class YahooFinanceClient:
                     # Optimize date range (this will set default start_date if still None)    
                     symbol_start_date, symbol_end_date = self._optimize_date_range(symbol_start_date, end_date_opt)
                     
-                    logger.info(f"Fetching data for {symbol} from {symbol_start_date} to {symbol_end_date}")
+                    logger.info(f"Fetching data for {clean_symbol} from {symbol_start_date} to {symbol_end_date}")
                     
                     data = await self._fetch_data(clean_symbol, symbol_start_date, symbol_end_date)
                     if data is None or data.empty:
@@ -570,34 +578,25 @@ class YahooFinanceClient:
                     history = result['history']
                     first_date = history[0]['date'] if history else 'unknown'
                     points_count = len(history)
-                    logger.info(f"Successfully processed {symbol}: "
+                    logger.info(f"Successfully processed {clean_symbol}: "
                               f"{points_count} data points from {first_date}")
 
                     
                     # Save data as JSON if we have a data directory
                     if self.data_dir:
                         try:
-                            # Determine exchange directory
-                            exchange_dir = None
-                            if symbol.endswith('.HK'):
-                                exchange_dir = 'HKEX'
-                            elif symbol.endswith('.AX'):
-                                exchange_dir = 'ASX'
-                            else:
-                                exchange_dir = 'NYSE' if '.' not in symbol else 'NASDAQ'
-                            
+                            # Save as compressed JSON
+                            # Use cleaned symbol for file name to avoid duplicate suffixes
+                            json_path = f"{self.data_dir}/{exchange_dir}/{clean_symbol}.json"
                             # Ensure exchange directory exists
                             os.makedirs(f"{self.data_dir}/{exchange_dir}", exist_ok=True)
-                            
-                            # Save as compressed JSON
-                            json_path = f"{self.data_dir}/{exchange_dir}/{symbol}.json"
                             self._save_raw_json(result, json_path)
                             
                             # Log file size if debug is enabled
                             if logger.isEnabledFor(logging.DEBUG):
                                 file_size = os.path.getsize(json_path)
                                 logger.debug(f"Saved raw JSON file for {symbol}: {file_size/1024:.2f}KB")
-                            logger.info(f"Saved JSON data for {symbol} to {json_path}")
+                            logger.info(f"Saved JSON data for {clean_symbol} to {json_path}")
                         except Exception as e:
                             logger.error(f"Error saving JSON data for {symbol}: {e}")
                      
