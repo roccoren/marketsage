@@ -198,20 +198,34 @@ class StockScanner:
                     signals = strategy.analyze(data)
                     if signals:
                         for signal in signals:
-                            # Map Strength to Confidence or use default value
-                            confidence = 0.0
-                            if 'Strength' in signal:
-                                confidence = 1.0 if signal['Strength'] == 'Strong' else 0.5
-                            elif 'Confidence' in signal:
-                                confidence = signal['Confidence']
+                            # Ensure signal is a dict
+                            if not isinstance(signal, dict):
+                                continue
+                            # Use new strength and summary score
+                            # Handle strength value which can be string or numeric
+                            strength_val = signal.get('Strength', 0.0)
+                            strength = 1.0 if isinstance(strength_val, str) and strength_val.lower() == 'strong' else float(strength_val) if not isinstance(strength_val, str) else 0.0
                             
-                            signal.update({
+                            summary_score = signal.get('Summary', 'Neutral')
+                            
+                            # Ensure all required fields are present
+                            enhanced_signal = {
                                 'Symbol': symbol,
                                 'Exchange': exchange,
                                 'Timestamp': timestamp,
                                 'Strategy': strategy.name,
-                                'Confidence': confidence
-                            })
+                                'Type': signal.get('Type', 'UNKNOWN'),
+                                'Summary': summary_score,
+                                'Price': float(signal.get('Price', 0.0)),
+                                'DailyChange': float(signal.get('DailyChange', 0.0)),
+                                'WeeklyChange': float(signal.get('WeeklyChange', 0.0)),
+                                'Volume': int(signal.get('Volume', 0)),
+                                'Signals': signal.get('Signals', {}),
+                                'Details': signal.get('Details', {}),
+                                'Strength': strength,
+                                'Confidence': strength  # Map strength to confidence for compatibility
+                            }
+                            signal.update(enhanced_signal)
                             results.append(signal)
                 except Exception as e:
                     logger.error(f"Strategy {strategy.name} failed for {symbol}: {e}")
@@ -390,12 +404,27 @@ class StockScanner:
     def _generate_analysis_report(self, signals: List[Dict[str, Any]]) -> None:
         """Generate and save comprehensive trading analysis report."""
         try:
-            # Convert any Timestamp objects in signals to ISO format strings
+            # Pre-process signals to ensure all fields are properly formatted
+            processed_signals = []
             for signal in signals:
+                # Convert Timestamp objects to ISO format strings
                 if isinstance(signal.get('Timestamp'), pd.Timestamp):
                     signal['Timestamp'] = signal['Timestamp'].isoformat()
-
-            analyzer = TradingAnalysis(signals, self.market_data)
+                
+                # Ensure Strength is a float
+                strength_val = signal.get('Strength', 0.0)
+                signal['Strength'] = (1.0 if isinstance(strength_val, str) and strength_val.lower() == 'strong'
+                                    else float(strength_val) if not isinstance(strength_val, str)
+                                    else 0.0)
+                
+                # Ensure other numeric fields are properly formatted
+                signal['Price'] = float(signal.get('Price', 0.0))
+                signal['Volume'] = int(signal.get('Volume', 0))
+                signal['DailyChange'] = float(signal.get('DailyChange', 0.0))
+                signal['WeeklyChange'] = float(signal.get('WeeklyChange', 0.0))
+                
+                processed_signals.append(signal)
+            analyzer = TradingAnalysis(processed_signals, self.market_data)
             report = analyzer.generate_full_report()
             
             # Convert the report to be JSON serializable
@@ -412,6 +441,7 @@ class StockScanner:
                 json.dump(report, f, indent=2, default=json_serialize)
             
             logger.info(f"Trading analysis report saved to {report_path}")
-            return report_path
+            return report
         except Exception as e:
             logger.error(f"Error generating trading analysis report: {str(e)}")
+            return None

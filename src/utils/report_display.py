@@ -19,30 +19,80 @@ def load_latest_report(output_dir: str) -> Dict[str, Any]:
         return json.load(f)
 
 def format_signal_summary(signal_summary: Dict[str, Any]) -> str:
-    """Format the signal summary section."""
+    """Format the signal summary section with enhanced display."""
     output = []
-    output.append("\n=== SIGNAL SUMMARY ===\n")
+    output.append("\n=== TECHNICAL ANALYSIS SIGNALS ===\n")
 
     if not signal_summary:
         output.append("No signals found.")
         return "\n".join(output)
     
     for strategy, data in signal_summary.items():
-        output.append(f"\nStrategy: {strategy}")
-        output.append("-" * (len(strategy) + 10))
-        output.append(f"Total Signals: {data['total_signals']}")
-        output.append(f"Average Confidence: {data['average_confidence']:.2f}")
-        
-        if data['signals_by_type']:
-            output.append("\nSignals by Type:")
-            for signal_type, count in data['signals_by_type'].items():
-                output.append(f"  - {signal_type}: {count}")
+        if not data.get('signals'):
+            continue
+
+        # Convert signals to DataFrame and sort by strength
+        signals_df = pd.DataFrame(data['signals'])
+        if not signals_df.empty:
+            # Handle missing Strength values
+            if 'Strength' in signals_df.columns:
+                signals_df = signals_df.sort_values('Strength', ascending=False)
+
+            # Create main signals table
+            main_table = []
+            for _, signal in signals_df.iterrows():
+                main_table.append([
+                    signal.get('symbol', 'N/A'),
+                    signal.get('Summary', 'N/A'),
+                    f"{signal.get('Price', 0):.2f}",
+                    f"{signal.get('DailyChange', 0):.2f}%",
+                    f"{signal.get('WeeklyChange', 0):.2f}%",
+                    f"{signal.get('Volume', 0):,.0f}",
+                    signal.get('Type', 'N/A'),
+                    f"{signal.get('Strength', 0):.2f}"
+                ])
+
+            output.append(tabulate(
+                main_table,
+                headers=['Symbol', 'Rating', 'Price', '1D%', '1W%', 'Volume', 'Signal', 'Strength'],
+                tablefmt='grid',
+                floatfmt='.2f'
+            ))
+
+            # Create strategy signals table
+            output.append("\nStrategy Signals:")
+            strategy_table = []
+            for _, signal in signals_df.iterrows():
+                signals = signal.get('Signals', {})
+                strategy_table.append([
+                    signal.get('symbol', 'N/A'),
+                    signals.get('MACD', 'N/A'),
+                    signals.get('BollingerBands', 'N/A'),
+                    signals.get('Momentum', 'N/A'),
+                    signals.get('Volume', 'N/A')
+                ])
+
+            output.append(tabulate(
+                strategy_table,
+                headers=['Symbol', 'MACD', 'BB', 'Momentum', 'Volume'],
+                tablefmt='pipe'
+            ))
+
+            # Add technical details section
+            output.append("\nTechnical Details:")
+            for _, signal in signals_df.iterrows():
+                symbol = signal.get('symbol', 'N/A')
+                details = signal.get('Details', {})
+                output.append(f"\n{symbol}:")
                 
-        if data.get('signals'):
-            output.append("\nRecent Signals:")
-            recent_df = pd.DataFrame(data['signals'])
-            output.append(tabulate(recent_df, headers='keys', tablefmt='pipe', showindex=False))
-            
+                macd_details = details.get('MACD', {})
+                output.append(f"  MACD: {macd_details.get('MACD', 0):.3f} | Signal: {macd_details.get('Signal', 0):.3f} | Hist: {macd_details.get('Histogram', 0):.3f}")
+                
+                bb_details = details.get('BollingerBands', {})
+                output.append(f"  BB: Upper: {bb_details.get('Upper', 0):.2f} | Middle: {bb_details.get('Middle', 0):.2f} | Lower: {bb_details.get('Lower', 0):.2f}")
+                
+                output.append(f"  Momentum: {details.get('Momentum', 0):.2f}")
+
     return "\n".join(output)
 
 def format_opportunities(opportunities: list) -> str:
@@ -84,8 +134,13 @@ def format_recommendations(recommendations: list) -> str:
         entry_str = f"{entry_range['low']:.2f}-{entry_range['high']:.2f}" if entry_range else "N/A"
         stop_loss = f"{rec['stop_loss']:.2f}" if rec.get('stop_loss') else "N/A"
         take_profit = "N/A"
-        if 'trade_timing' in rec:
-            take_profit = f"{float(rec['entry_range']['high']) * 1.1:.2f}" if rec['action'] == 'BUY' else f"{float(rec['entry_range']['low']) * 0.9:.2f}"
+        
+        # Safely calculate take profit only if entry_range exists and has the required keys
+        if entry_range and 'high' in entry_range and 'low' in entry_range:
+            if rec['action'] == 'BUY':
+                take_profit = f"{float(entry_range['high']) * 1.1:.2f}"
+            elif rec['action'] == 'SELL':
+                take_profit = f"{float(entry_range['low']) * 0.9:.2f}"
         
         rows.append([
             rec['symbol'],
@@ -98,7 +153,6 @@ def format_recommendations(recommendations: list) -> str:
         ])
     
     output.append(tabulate(rows, headers=headers, tablefmt='pipe'))
-
     # Add detailed trade timing information
     output.append("\nTrade Execution Details:")
     for rec in recommendations:
@@ -210,14 +264,21 @@ def display_analysis_report(report: Dict[str, Any]) -> str:
     if not report:
         return "\nNo analysis report data available."
     
-    if not all(key in report for key in ['signal_summary', 'high_conviction_opportunities', 'recommended_actions', 'risk_assessment', 'execution_strategy']):
-        return "\nIncomplete analysis report data."
-    sections = [
-        format_signal_summary(report['signal_summary']),
-        format_opportunities(report['high_conviction_opportunities']),
-        format_recommendations(report['recommended_actions']),
-        format_risk_assessment(report['risk_assessment']),
-        format_execution_strategy(report['execution_strategy'])
-    ]
+    sections = []
+    
+    # Safely add each section with None checks
+    if report.get('signal_summary') is not None:
+        sections.append(format_signal_summary(report['signal_summary']))
+    if report.get('high_conviction_opportunities') is not None:
+        sections.append(format_opportunities(report['high_conviction_opportunities']))
+    if report.get('recommended_actions') is not None:
+        sections.append(format_recommendations(report['recommended_actions']))
+    if report.get('risk_assessment') is not None:
+        sections.append(format_risk_assessment(report['risk_assessment']))
+    if report.get('execution_strategy') is not None:
+        sections.append(format_execution_strategy(report['execution_strategy']))
+    
+    if not sections:
+        return "\nNo valid analysis report sections available."
     
     return "\n\n".join(sections)

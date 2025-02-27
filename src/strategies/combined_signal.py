@@ -172,30 +172,84 @@ class CombinedSignalStrategy(Strategy):
             logger.error(f"Error in analysis: {str(e)}")
             return []
 
-    def _create_signal_dict(self, data: pd.DataFrame, macd_data: pd.DataFrame, 
-                          bb_data: pd.DataFrame, momentum: pd.Series, 
-                          row_index: int, signal_type: str, 
+    def calculate_signal_strength(self, macd_hist: float, volume_ratio: float, price_change: float) -> float:
+        """Calculate signal strength score between 0 and 1."""
+        # Normalize MACD histogram to contribute 40% of the score
+        macd_score = min(abs(macd_hist) / 0.5, 1.0) * 0.4
+        
+        # Volume ratio contributes 30% of the score
+        volume_score = min(volume_ratio - 1, 2.0) / 2.0 * 0.3
+        
+        # Price change contributes 30% of the score
+        price_score = min(abs(price_change) / 0.03, 1.0) * 0.3
+        
+        return min(macd_score + volume_score + price_score, 1.0)
+
+    def calculate_summary_score(self, signal_strength: float, signal_type: str) -> str:
+        """Calculate summary score based on signal strength."""
+        if signal_type == SignalType.BUY:
+            if signal_strength > 0.8:
+                return "Strong Buy"
+            elif signal_strength > 0.5:
+                return "Buy"
+            else:
+                return "Neutral"
+        else:  # SELL
+            if signal_strength > 0.8:
+                return "Strong Sell"
+            elif signal_strength > 0.5:
+                return "Sell"
+            else:
+                return "Neutral"
+
+    def _create_signal_dict(self, data: pd.DataFrame, macd_data: pd.DataFrame,
+                          bb_data: pd.DataFrame, momentum: pd.Series,
+                          row_index: int, signal_type: str,
                           signal_date: pd.Timestamp) -> Dict:
         """Create signal dictionary with all relevant information."""
+        # Calculate signal strength
+        signal_strength = self.calculate_signal_strength(
+            float(macd_data['Histogram'].iloc[row_index]),
+            float(data['Volume'].iloc[row_index] / data['Volume'].rolling(window=20).mean().iloc[row_index]),
+            float(data['Close'].pct_change().iloc[row_index])
+        )
+
+        # Calculate percentage changes
+        daily_change = float(data['Close'].pct_change().iloc[row_index] * 100)
+        weekly_change = float(data['Close'].pct_change(periods=5).iloc[row_index] * 100)
+        
+        # Get individual strategy signals
+        macd_signal = "Bullish" if macd_data['MACD'].iloc[row_index] > macd_data['Signal'].iloc[row_index] else "Bearish"
+        bb_position = "Lower" if data['Close'].iloc[row_index] < bb_data['MiddleBand'].iloc[row_index] else "Upper"
+        momentum_signal = "Positive" if momentum.iloc[row_index] > 0 else "Negative"
+        volume_signal = "High" if data['Volume'].iloc[row_index] > data['Volume'].rolling(window=20).mean().iloc[row_index] else "Low"
+
         return {
             'Date': signal_date.strftime('%Y-%m-%d'),
             'Type': signal_type,
+            'Summary': self.calculate_summary_score(signal_strength, signal_type),
             'Price': float(data['Close'].iloc[row_index]),
             'Volume': float(data['Volume'].iloc[row_index]),
-            'MACD': {
-                'MACD': float(macd_data['MACD'].iloc[row_index]),
-                'Signal': float(macd_data['Signal'].iloc[row_index]),
-                'Histogram': float(macd_data['Histogram'].iloc[row_index])
+            'DailyChange': daily_change,
+            'WeeklyChange': weekly_change,
+            'Signals': {
+                'MACD': macd_signal,
+                'BollingerBands': bb_position,
+                'Momentum': momentum_signal,
+                'Volume': volume_signal
             },
-            'BollingerBands': {
-                'Upper': float(bb_data['UpperBand'].iloc[row_index]),
-                'Middle': float(bb_data['MiddleBand'].iloc[row_index]),
-                'Lower': float(bb_data['LowerBand'].iloc[row_index])
+            'Details': {
+                'MACD': {
+                    'MACD': float(macd_data['MACD'].iloc[row_index]),
+                    'Signal': float(macd_data['Signal'].iloc[row_index]),
+                    'Histogram': float(macd_data['Histogram'].iloc[row_index])
+                },
+                'BollingerBands': {
+                    'Upper': float(bb_data['UpperBand'].iloc[row_index]),
+                    'Middle': float(bb_data['MiddleBand'].iloc[row_index]),
+                    'Lower': float(bb_data['LowerBand'].iloc[row_index])
+                },
+                'Momentum': float(momentum.iloc[row_index])
             },
-            'Momentum': float(momentum.iloc[row_index]),
-            'Strength': self.calculate_signal_strength(
-                float(macd_data['Histogram'].iloc[row_index]),
-                float(data['Volume'].iloc[row_index] / data['Volume'].rolling(window=20).mean().iloc[row_index]),
-                float(data['Close'].pct_change().iloc[row_index])
-            )
+            'Strength': signal_strength
         }

@@ -29,140 +29,89 @@ class Configuration:
         self.exchanges = config_data.get('exchanges', [])
         self.providers = config_data.get('providers', {})
 
-async def main():
+def initialize_strategies() -> List[Any]:
+    """Initialize and return list of trading strategies based on command line arguments."""
+    strategy_map = {
+        'rsi_stoch': RSIStochStrategy,
+        'atr_ma': ATRMovingAverageStrategy,
+        'adx_macd_cci': ADXMACDCCI_Strategy,
+        'obv': OBVStrategy
+    }
+    
+    strategies = []
+    if args.strategies:
+        selected = args.strategies.split(',')
+        for strategy_name in selected:
+            if strategy_name in strategy_map:
+                strategies.append(strategy_map[strategy_name]())
+            else:
+                logger.warning(f"Unknown strategy: {strategy_name}")
+    else:
+        strategies = [strategy() for strategy in strategy_map.values()]
+        
+    if not strategies:
+        raise ValueError(f"No valid strategies selected. Available strategies: {', '.join(strategy_map.keys())}")
+    
+    return strategies
+
+async def display_report(output_directory: str) -> None:
+    """Display the analysis report from the latest scan."""
     try:
-        # Get project root directory (parent of src)
+        latest_report = load_latest_report(output_directory)
+        if latest_report is None:
+            logger.warning("No valid trading analysis report found")
+            return
+            
+        report_text = display_analysis_report(latest_report)
+        print("\nTRADING ANALYSIS REPORT")
+        print("=" * 80)
+        print(report_text)
+    except FileNotFoundError as e:
+        logger.error(f"Could not display trading analysis report: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error processing trading analysis report: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+async def main() -> None:
+    """Main async function for the stock scanner"""
+    try:
         root_dir = Path(__file__).parent.parent
         
-        # Load configuration
+        # Create necessary directories
+        Path(root_dir / "data").mkdir(exist_ok=True)
+        Path(root_dir / "output").mkdir(exist_ok=True)
+        
+        # Load and process configuration
         with open(root_dir / "config" / "config.json", 'r') as f:
             config_data = json.load(f)
         
-        # Override exchanges if provided via command line
-        if args.exchanges:
-            config_data['exchanges'] = [{'name': exchange} for exchange in args.exchanges]
-        
-        config = Configuration(config_data)
-        
-        # Initialize scanner
-        scanner = StockScanner(config)
-        
-        # Available strategies mapping
-        strategy_map = {
-            'rsi_stoch': RSIStochStrategy,
-            'atr_ma': ATRMovingAverageStrategy,
-            'adx_macd_cci': ADXMACDCCI_Strategy,
-            'obv': OBVStrategy
-        }
-        
-        # Initialize selected strategies or all if none specified
-        strategies = []
-        if args.strategies:
-            selected = args.strategies.split(',')
-            for strategy_name in selected:
-                if strategy_name in strategy_map:
-                    strategies.append(strategy_map[strategy_name]())
-                else:
-                    logger.warning(f"Unknown strategy: {strategy_name}")
-        else:
-            strategies = [strategy() for strategy in strategy_map.values()]
-            
-        if not strategies:
-            raise ValueError(f"No valid strategies selected. Available strategies: {', '.join(strategy_map.keys())}")
-        
-        for strategy in strategies:
-            scanner.register_strategy(strategy)
-        
-        # Run the scan with all registered strategies
-        logger.info("Running scan with all strategies...")
-        await scanner.scan(days=60)  # Use last 60 days of data for analysis
-        
-        logger.info("Scan completed successfully")
-        
-        # Display the analysis report
-        try:
-            latest_report = load_latest_report(config.output_directory)
-            report_text = display_analysis_report(latest_report)
-            print("\nTRADING ANALYSIS REPORT")
-            print("=" * 80)
-            print(report_text)
-        except FileNotFoundError as e:
-            logger.error(f"Could not display trading analysis report: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error processing trading analysis report: {str(e)}")
-        
-    except Exception as e:
-        logger.error(f"Error during scan: {str(e)}")
-        raise
-
-async def async_main():
-    """Main async function for the stock scanner"""
-    # Get project root directory (parent of src)
-    root_dir = Path(__file__).parent.parent
-    
-    # Create necessary directories if they don't exist
-    Path(root_dir / "data").mkdir(exist_ok=True)
-    Path(root_dir / "output").mkdir(exist_ok=True)
-    
-    try:
-        # Load configuration
-        with open(root_dir / "config" / "config.json", 'r') as f:
-            config_data = json.load(f)
-        
-        # Rest of the original async main function
         if args.exchanges:
             config_data['exchanges'] = [{'name': exchange} for exchange in args.exchanges]
         
         config = Configuration(config_data)
         scanner = StockScanner(config)
         
-        strategy_map = {
-            'rsi_stoch': RSIStochStrategy,
-            'atr_ma': ATRMovingAverageStrategy,
-            'adx_macd_cci': ADXMACDCCI_Strategy,
-            'obv': OBVStrategy
-        }
-        
-        strategies = []
-        if args.strategies:
-            selected = args.strategies.split(',')
-            for strategy_name in selected:
-                if strategy_name in strategy_map:
-                    strategies.append(strategy_map[strategy_name]())
-                else:
-                    logger.warning(f"Unknown strategy: {strategy_name}")
-        else:
-            strategies = [strategy() for strategy in strategy_map.values()]
-            
-        if not strategies:
-            raise ValueError(f"No valid strategies selected. Available strategies: {', '.join(strategy_map.keys())}")
-        
+        # Initialize and register strategies
+        strategies = initialize_strategies()
         for strategy in strategies:
             scanner.register_strategy(strategy)
         
+        # Run scan
         logger.info("Running scan with all strategies...")
         await scanner.scan(days=60)
-        
         logger.info("Scan completed successfully")
         
-        try:
-            latest_report = load_latest_report(config.output_directory)
-            report_text = display_analysis_report(latest_report)
-            print("\nTRADING ANALYSIS REPORT")
-            print("=" * 80)
-            print(report_text)
-        except FileNotFoundError as e:
-            logger.error(f"Could not display trading analysis report: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error processing trading analysis report: {str(e)}")
-            
+        # Display results
+        await display_report(config.output_directory)
+        
     except Exception as e:
         logger.error(f"Error during scan: {str(e)}")
         raise
 
-def main():
+def run():
     """Entry point for the stock scanner"""
-    asyncio.run(async_main())
+    asyncio.run(main())
 
 if __name__ == "__main__":
-    main()
+    run()

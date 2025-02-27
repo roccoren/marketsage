@@ -8,7 +8,29 @@ logger = logging.getLogger(__name__)
 
 class SignalAnalysis:
     def __init__(self, signals: List[Dict[str, Any]]):
-        self.signals = pd.DataFrame(signals)
+        # Pre-process signals to ensure all required fields exist and are properly formatted
+        processed_signals = []
+        for signal in signals:
+            # Ensure required fields with proper data types
+            processed_signal = {
+                'Symbol': signal.get('Symbol', ''),
+                'Exchange': signal.get('Exchange', ''),
+                'Strategy': signal.get('Strategy', ''),
+                'Type': signal.get('Type', 'Unknown'),
+                'Summary': signal.get('Summary', 'Neutral'),
+                'Price': float(signal.get('Price', 0.0)),
+                'Volume': int(signal.get('Volume', 0)),
+                'DailyChange': float(signal.get('DailyChange', 0.0)),
+                'WeeklyChange': float(signal.get('WeeklyChange', 0.0)),
+                'Strength': (1.0 if isinstance(signal.get('Strength'), str) and signal.get('Strength', '').lower() == 'strong'
+                           else float(signal.get('Strength', 0.0)) if not isinstance(signal.get('Strength'), str)
+                           else 0.0),
+                'Timestamp': signal.get('Timestamp', '')
+            }
+            processed_signals.append(processed_signal)
+
+        self.signals = pd.DataFrame(processed_signals)
+        
         # Parse timestamps flexibly
         def clean_ts(ts):
             # Remove microseconds and Z suffix
@@ -35,13 +57,26 @@ class SignalAnalysis:
             signals_summary = []
             
             for _, signal in strategy_df.iterrows():
+                # Handle strength value which can be numeric or string
+                strength_val = signal.get('Strength', 0.0)
+                strength = 1.0 if isinstance(strength_val, str) and strength_val.lower() == 'strong' else float(strength_val) if not isinstance(strength_val, str) else 0.0
+                confidence_val = signal.get('Confidence', strength)
+                confidence = 1.0 if isinstance(confidence_val, str) and confidence_val.lower() == 'strong' else float(confidence_val) if not isinstance(confidence_val, str) else 0.0
+                
                 signals_summary.append({
                     'symbol': signal['Symbol'],
-                    'signal_type': signal.get('Signal', 'Unknown'),
-                    'confidence': signal.get('Confidence', 0),
+                    'signal_type': signal.get('Type', 'Unknown'),
+                    'confidence': confidence,
+                    'strength': strength,
+                    'summary': signal.get('Summary', 'Neutral'),
                     'timestamp': signal['Timestamp'],
-                    'additional_info': {k: v for k, v in signal.items() 
-                                     if k not in ['Symbol', 'Strategy', 'Signal', 'Confidence', 'Timestamp', 'Exchange']}
+                    'price': float(signal.get('Price', 0.0)),
+                    'daily_change': float(signal.get('DailyChange', 0.0)),
+                    'weekly_change': float(signal.get('WeeklyChange', 0.0)),
+                    'volume': int(signal.get('Volume', 0)),
+                    'signals': signal.get('Signals', {}),
+                    'details': signal.get('Details', {}),
+                    'exchange': signal.get('Exchange', '')
                 })
             
             strategy_signals[strategy] = signals_summary
@@ -50,6 +85,11 @@ class SignalAnalysis:
 
 class OpportunityAnalysis:
     def __init__(self, signals: List[Dict[str, Any]]):
+        # Pre-process signals to ensure 'Strength' is numeric before DataFrame conversion
+        for signal in signals:
+            strength_val = signal.get('Strength', 0.0)
+            signal['Strength'] = 1.0 if isinstance(strength_val, str) and strength_val.lower() == 'strong' else float(strength_val) if not isinstance(strength_val, str) else 0.0
+            
         self.signals = pd.DataFrame(signals)
         self.signals['Timestamp'] = pd.to_datetime(self.signals['Timestamp'])
 
@@ -57,22 +97,54 @@ class OpportunityAnalysis:
         """Identify and rank symbols with multiple aligned signals"""
         opportunities = []
         
+        # Convert string-based strength values to numeric
+        self.signals['Strength'] = self.signals['Strength'].apply(
+            lambda x: 1.0 if isinstance(x, str) and x.lower() == 'strong'
+            else float(x) if not isinstance(x, str)
+            else 0.0
+        )
+        self.signals['Confidence'] = self.signals['Confidence'].apply(
+            lambda x: 1.0 if isinstance(x, str) and x.lower() == 'strong'
+            else float(x) if not isinstance(x, str)
+            else 0.0
+        )
+        
         # Group signals by symbol
         symbol_groups = self.signals.groupby('Symbol')
         
         for symbol, group in symbol_groups:
             signal_count = len(group)
             unique_strategies = group['Strategy'].nunique()
-            avg_confidence = group['Confidence'].mean()
+            
+            # Use Strength for scoring if available, otherwise fallback to Confidence
+            avg_strength = float(group['Strength'].mean())
             
             if unique_strategies >= 2:  # Require signals from at least 2 different strategies
+                # Clean signal records
+                signals = []
+                for _, signal in group.iterrows():
+                    signals.append({
+                        'Symbol': signal['Symbol'],
+                        'Strategy': signal['Strategy'],
+                        'Type': signal.get('Type', 'Unknown'),
+                        'Summary': signal.get('Summary', 'Neutral'),
+                        'Strength': float(signal.get('Strength', 0.0)) if not isinstance(signal.get('Strength'), str) else float(signal.get('Strength') == 'Strong'),
+                        'Price': float(signal.get('Price', 0.0)),
+                        'DailyChange': float(signal.get('DailyChange', 0.0)),
+                        'WeeklyChange': float(signal.get('WeeklyChange', 0.0)),
+                        'Volume': int(signal.get('Volume', 0)),
+                        'Signals': signal.get('Signals', {}),
+                        'Details': signal.get('Details', {}),
+                        'Timestamp': signal['Timestamp']
+                    })
+                
                 opportunities.append({
                     'symbol': symbol,
                     'signal_count': signal_count,
                     'strategy_count': unique_strategies,
-                    'confidence_score': avg_confidence,
-                    'signals': group.to_dict('records'),
-                    'rank_score': (signal_count * avg_confidence * unique_strategies) / 100
+                    'confidence_score': avg_strength,  # Use strength as confidence score
+                    'signals': signals,
+                    'rank_score': (signal_count * avg_strength * unique_strategies) / 100
                 })
         
         # Sort by rank score in descending order
@@ -88,14 +160,40 @@ class TradingAnalysis:
 
     def generate_full_report(self) -> Dict[str, Any]:
         """Generate comprehensive trading analysis report"""
-        report = {
-            "signal_summary": self._generate_signal_summary(),
-            "high_conviction_opportunities": self._generate_opportunity_summary(),
-            "recommended_actions": self._generate_action_recommendations(),
-            "risk_assessment": self._generate_risk_assessment(),
-            "execution_strategy": self._generate_execution_strategy()
-        }
-        return report
+        try:
+            report = {
+                "signal_summary": self._generate_signal_summary(),
+                "high_conviction_opportunities": self._generate_opportunity_summary(),
+                "recommended_actions": self._generate_action_recommendations(),
+                "risk_assessment": self._generate_risk_assessment(),
+                "execution_strategy": self._generate_execution_strategy()
+            }
+            
+            # Verify all numeric values are properly formatted
+            def validate_numeric_values(data):
+                if isinstance(data, dict):
+                    return {k: validate_numeric_values(v) for k, v in data.items()}
+                elif isinstance(data, list):
+                    return [validate_numeric_values(item) for item in data]
+                elif isinstance(data, (int, float)):
+                    return data
+                elif isinstance(data, str):
+                    try:
+                        return float(data) if '.' in data else int(data)
+                    except ValueError:
+                        return data
+                else:
+                    return data
+            
+            report = validate_numeric_values(report)
+            return report
+            
+        except Exception as e:
+            logger.error(f"Error generating full report: {str(e)}")
+            return {
+                "error": "Failed to generate complete report",
+                "details": str(e)
+            }
 
     def _generate_signal_summary(self) -> Dict[str, Any]:
         """Generate strategy-wise signal summary"""
@@ -148,9 +246,24 @@ class TradingAnalysis:
         
         for opp in opportunities:
             signals = opp['signals']
-            buy_signals = sum(1 for s in signals if s.get('Signal', '').upper() == 'BUY')
-            sell_signals = sum(1 for s in signals if s.get('Signal', '').upper() == 'SELL')
+            # Ensure numeric strength values and use Type instead of Signal
+            buy_signals = sum(1 for s in signals if s.get('Type', '').upper() == 'BUY')
+            sell_signals = sum(1 for s in signals if s.get('Type', '').upper() == 'SELL')
             
+            # Ensure all signal fields are properly formatted
+            for s in signals:
+                # Convert strength to numeric if it's a string
+                strength_val = s.get('Strength')
+                if strength_val is None:
+                    s['Strength'] = 0.0
+                elif isinstance(strength_val, str):
+                    s['Strength'] = float(strength_val.lower() == 'strong')
+                else:
+                    try:
+                        s['Strength'] = float(strength_val)
+                    except (ValueError, TypeError):
+                        s['Strength'] = 0.0
+
             action = 'HOLD'
             if buy_signals > sell_signals and buy_signals >= 2:
                 action = 'BUY'
@@ -206,15 +319,51 @@ class TradingAnalysis:
         # Simplified market condition assessment based on signal patterns
         recent_signals_df = pd.DataFrame(self.signals)
         if 'Timestamp' not in recent_signals_df.columns or len(recent_signals_df) == 0:
-            return {"market_bias": "Neutral", "signal_strength": "Weak", "recent_signal_count": 0}
+            return {
+                "market_bias": "Neutral",
+                "signal_strength": 0.0,
+                "signal_quality": "Weak",
+                "recent_signal_count": 0
+            }
             
+        # Ensure Strength column exists with default value
+        if 'Strength' not in recent_signals_df.columns:
+            recent_signals_df['Strength'] = 0.0
+        else:
+            # Convert string-based strength values to numeric
+            recent_signals_df['Strength'] = recent_signals_df['Strength'].apply(
+                lambda x: 1.0 if isinstance(x, str) and x.lower() == 'strong'
+                else float(x) if not isinstance(x, str)
+                else 0.0
+            )
         recent_signals_df = recent_signals_df.sort_values('Timestamp', ascending=False).head(100)
         
-        buy_ratio = len(recent_signals_df[recent_signals_df.get('Signal', pd.Series(['UNKNOWN'] * len(recent_signals_df))) == 'BUY']) / len(recent_signals_df)
+        # Use Type field instead of Signal
+        buy_signals = recent_signals_df[recent_signals_df['Type'] == 'BUY']
+        sell_signals = recent_signals_df[recent_signals_df['Type'] == 'SELL']
+        
+        buy_ratio = len(buy_signals) / len(recent_signals_df) if len(recent_signals_df) > 0 else 0.5
+        avg_strength = float(recent_signals_df['Strength'].mean())
+        
+        # Determine market bias and signal quality
+        if buy_ratio > 0.6:
+            market_bias = "Bullish"
+        elif buy_ratio < 0.4:
+            market_bias = "Bearish"
+        else:
+            market_bias = "Neutral"
+            
+        if avg_strength > 0.7:
+            signal_quality = "Strong"
+        elif avg_strength > 0.4:
+            signal_quality = "Moderate"
+        else:
+            signal_quality = "Weak"
         
         return {
-            "market_bias": "Bullish" if buy_ratio > 0.6 else "Bearish" if buy_ratio < 0.4 else "Neutral",
-            "signal_strength": "Strong" if abs(buy_ratio - 0.5) > 0.3 else "Moderate" if abs(buy_ratio - 0.5) > 0.1 else "Weak",
+            "market_bias": market_bias,
+            "signal_strength": avg_strength,
+            "signal_quality": signal_quality,
             "recent_signal_count": len(recent_signals_df)
         }
 
