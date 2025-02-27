@@ -86,7 +86,7 @@ class CircuitBreaker:
                 
                 if self.failures >= self.failure_threshold:
                     self.state = "open"
-                    
+
                 raise e
 
 class YahooFinanceClient:
@@ -448,10 +448,20 @@ class YahooFinanceClient:
         """
         async def protected_batch_fetch():
             end_date_opt = end_date if end_date else datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now()
+            # If in incremental mode, use yesterday as the end date to ensure we get completed trading days
+            if incremental and not end_date:
+                yesterday = today - timedelta(days=1)
+                end_date_opt = yesterday.strftime('%Y-%m-%d')
+                logger.info(f"Using yesterday ({end_date_opt}) as end date for incremental update")
+            
+            global_end_date = end_date_opt
             results = {}
             
             # Use semaphore to control concurrent operations
             semaphore = asyncio.Semaphore(8)  # Further reduced concurrent operations
+
+            logger.debug(f"Batch fetch date range: start={start_date}, end={end_date_opt}")
             
             async def process_symbol(symbol: str) -> tuple[str, Optional[Dict[str, Any]]]:
                 async with semaphore:
@@ -499,10 +509,14 @@ class YahooFinanceClient:
                                     if history:
                                         last_date = datetime.strptime(history[-1]['date'], '%Y-%m-%d')
                                         # Start from the next day
-                                        next_day = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
-                                        symbol_start_date = next_day
-                                        result = existing_data  # Store existing data to merge later
-                                        logger.info(f"Incremental update for {symbol}: fetching from {next_day} to {end_date_opt}")
+                                        next_day = last_date + timedelta(days=1)
+                                        # Only proceed if there's new data to fetch
+                                        if next_day.strftime('%Y-%m-%d') <= global_end_date:
+                                            symbol_start_date = next_day.strftime('%Y-%m-%d')
+                                            logger.info(f"Incremental update for {symbol}: fetching from {symbol_start_date} to {global_end_date}")
+                                        
+                                        result = existing_data
+                                        
                                     else:
                                         logger.warning(f"No timestamps found in existing data for {symbol}")
                                 else:
@@ -519,7 +533,7 @@ class YahooFinanceClient:
                         symbol_start_date = start_date
                         
                     # Optimize date range (this will set default start_date if still None)    
-                    symbol_start_date, symbol_end_date = self._optimize_date_range(symbol_start_date, end_date_opt)
+                    symbol_start_date, symbol_end_date = self._optimize_date_range(symbol_start_date, global_end_date)
                     
                     logger.info(f"Fetching data for {clean_symbol} from {symbol_start_date} to {symbol_end_date}")
                     
@@ -555,6 +569,7 @@ class YahooFinanceClient:
                         try:
                             # Merge the history lists while maintaining chronological order
                             combined_history = result['history'] + new_data['history']
+                            json_path = f"{self.data_dir}/{exchange_dir}/{clean_symbol}.json"
                             # Remove any potential duplicates based on date
                             seen_dates = set()
                             unique_history = []
@@ -563,9 +578,17 @@ class YahooFinanceClient:
                                     seen_dates.add(entry['date'])
                                     unique_history.append(entry)
                             result['history'] = sorted(unique_history, key=lambda x: x['date'])
+                            
+                            # Save the merged data
+                            try:
+                                os.makedirs(f"{self.data_dir}/{exchange_dir}", exist_ok=True)
+                                self._save_raw_json(result, json_path)
+                                logger.info(f"Saved merged data for {symbol} to {json_path}")
+                            except Exception as save_error:
+                                logger.error(f"Error saving merged data for {symbol}: {save_error}")
+                            return symbol, result
                         except Exception as e:
                             logger.error(f"Error merging data for {symbol}: {e}")
-                        return symbol, None
                     else:
                         result = new_data
 
