@@ -118,18 +118,15 @@ async def process_nyse_nasdaq(file_path, exchange_name, incremental=False, start
         filtered_listings = []
         symbols_to_check = []
         
-        company_name_header = 'Company Name' if exchange_name == 'NYSE' else 'Security Name'
-        symbol_header = 'ACT Symbol' if exchange_name == 'NYSE' else 'Symbol'
-        
-        with open(file_path, mode='r', encoding='utf-8') as csvfile:
-            csv_reader = csv.DictReader(csvfile)
-            for row in csv_reader:
-                symbol = row[symbol_header]
+        with open(file_path, 'r') as f:
+            listings = json.load(f)
+            for listing in listings:
+                symbol = listing['symbol']
                 # If symbol_filter is provided, only process that specific symbol
                 if symbol_filter and symbol != symbol_filter:
                     continue
                     
-                company_name = row[company_name_header]
+                company_name = listing['company_name']
                 # Filter out SPACs, warrants, and similar entities
                 if re.search(r'\b(Corporation(s)?|Acquisition(s)?|Warrant(s)?|Unit(s)?|Right(s)?)\b', company_name, re.IGNORECASE):
                     continue
@@ -147,16 +144,14 @@ async def process_nyse_nasdaq(file_path, exchange_name, incremental=False, start
             return False
 
         active_statuses = await process_symbols_async(symbols_to_check, start_date=start_date, incremental=incremental, exchange_name=exchange_name)
-        with open(file_path, mode='r', encoding='utf-8') as csvfile:
-            csv_reader = csv.DictReader(csvfile)
-            for row in csv_reader:
-                symbol = row[symbol_header]
-                if symbol in active_statuses:
-                    filtered_listings.append({
-                        'symbol': symbol,
-                        'company_name': row[company_name_header],
-                        'market_cap': active_statuses[symbol]
-                    })
+        for listing in listings:
+            symbol = listing['symbol']
+            if symbol in active_statuses:
+                filtered_listings.append({
+                    'symbol': symbol,
+                    'company_name': listing['company_name'],
+                    'market_cap': active_statuses[symbol]
+                })
 
         output_file = f'data/{exchange_name.lower()}_filtered_listings.json'
         with open(output_file, 'w') as f:
@@ -173,26 +168,13 @@ async def process_hkex(file_path, incremental=False, start_date=None, symbol_fil
         logging.info("Starting HKEX listings processing")
         filtered_listings = []
         symbols_to_check = []
-        symbol_mapping = {}  # Track original symbols to clean symbols mapping
         
-        with open(file_path, mode='r', encoding='utf-8') as csvfile:
-            csv_reader = csv.DictReader(csvfile)
-            data = list(csv_reader)  # Store all rows
+        with open(file_path, 'r') as f:
+            listings = json.load(f)
             
-            # First pass: collect symbols with proper formatting
-            for row in data:
-                original_symbol = row['Symbol']
-                if original_symbol.endswith('W') or original_symbol.endswith('.W'):
-                    continue  # Skip warrants
-                
-                # Fix symbol format for HKEX stocks
-                # First, remove any suffix or non-digit prefix
-                clean_symbol = re.sub(r'^[^0-9]*', '', original_symbol)
-                clean_symbol = clean_symbol.split('.')[0]  # Remove any suffix like .HK
-                
-                # Convert to int and pad with zeros to ensure 4 digits
-                numeric_symbol = str(int(clean_symbol)).zfill(4)
-                yahoo_symbol = f"{numeric_symbol}.HK"
+            for listing in listings:
+                # Convert to Yahoo Finance format
+                yahoo_symbol = f"{listing['symbol']}.HK"
                 
                 # If symbol_filter is provided, only process that specific symbol
                 if symbol_filter and yahoo_symbol != symbol_filter:
@@ -200,52 +182,24 @@ async def process_hkex(file_path, incremental=False, start_date=None, symbol_fil
                     
                 symbols_to_check.append(yahoo_symbol)
                 logger.debug(f"Added symbol for processing: {yahoo_symbol}")
-                symbol_mapping[yahoo_symbol] = original_symbol
                 
                 # If we found the specific symbol we're looking for, no need to check others
                 if symbol_filter and yahoo_symbol == symbol_filter:
                     break
         
-        # Process in optimized batches
         logging.info(f"Processing {len(symbols_to_check)} HKEX symbols...")
-        all_active_statuses = {}
-        
-        async with YahooFinanceClient(data_dir="data") as client:
-            # Get optimal batch size from client
-            batch_size = client.batch_size
-        
-        # Process symbols in chunks for memory efficiency
-        for i in range(0, len(symbols_to_check), 100):  # Process 100 symbols at a time
-            chunk = symbols_to_check[i:i + 100]
-            logging.info(f"Processing batch {i//100 + 1} of {(len(symbols_to_check) + 99)//100} ({len(chunk)} symbols)")
-            batch_statuses = await process_symbols_async(chunk, start_date=start_date, incremental=incremental)
-            all_active_statuses.update(batch_statuses)
-            # Add async delay between batches to avoid overwhelming the API
-            await asyncio.sleep(3)  # Adjusted delay between batches
+        active_statuses = await process_symbols_async(symbols_to_check, start_date=start_date, incremental=incremental)
 
-        # Second pass: create filtered listings
-        for row in data:
-            original_symbol = row['Symbol']
-            # Skip warrants
-            if original_symbol.endswith('W') or original_symbol.endswith('.W'):
-                continue
-                
-            # Clean symbol for lookup
-            clean_symbol = re.sub(r'^[^0-9]*', '', original_symbol)
-            clean_symbol = clean_symbol.split('.')[0]  # Remove any suffix
-            
-            numeric_symbol = str(int(clean_symbol)).zfill(4)
-            yahoo_symbol = f"{numeric_symbol}.HK"
-            
-            if yahoo_symbol in all_active_statuses:
+        for listing in listings:
+            yahoo_symbol = f"{listing['symbol']}.HK"
+            if yahoo_symbol in active_statuses:
                 filtered_listings.append({
-                    'symbol': clean_symbol,
-                    'original_symbol': original_symbol,  # Keep original for reference
-                    'company_name': row['Company'],
-                    'sector': row['Sector'],
-                    'industry': row['Industry'],
-                    'market_cap': all_active_statuses[yahoo_symbol],
-                    'currency': row['Currency']
+                    'symbol': listing['symbol'],
+                    'company_name': listing['company_name'],
+                    'sector': listing.get('sector', ''),
+                    'industry': listing.get('industry', ''),
+                    'market_cap': active_statuses[yahoo_symbol],
+                    'currency': listing.get('currency', 'HKD')
                 })
         
         # Sort by symbol for easier reference
@@ -266,32 +220,34 @@ async def process_asx(file_path, incremental=False, start_date=None, symbol_filt
         filtered_listings = []
         symbols_to_check = []
         
-        with open(file_path, mode='r', encoding='utf-8') as jsonfile:
-            listings = json.load(jsonfile)
-            for row in listings:
-                symbol = f"{row['symbol']}.AX"  # Add AX suffix for yfinance
+        with open(file_path, 'r') as f:
+            listings = json.load(f)
+            for listing in listings:
+                # Convert to Yahoo Finance format
+                yahoo_symbol = f"{listing['symbol']}.AX"
+                
                 # If symbol_filter is provided, only process that specific symbol
-                if symbol_filter and symbol != symbol_filter:
+                if symbol_filter and yahoo_symbol != symbol_filter:
                     continue
                     
-                symbols_to_check.append(symbol)
+                symbols_to_check.append(yahoo_symbol)
+                logger.debug(f"Added symbol for processing: {yahoo_symbol}")
                 
                 # If we found the specific symbol we're looking for, no need to check others
-                if symbol_filter and symbol == symbol_filter:
+                if symbol_filter and yahoo_symbol == symbol_filter:
                     break
 
         logging.info(f"Processing {len(symbols_to_check)} ASX symbols...")
         active_statuses = await process_symbols_async(symbols_to_check, start_date=start_date, incremental=incremental)
 
-        # Create filtered listings
-        for row in listings:
-            symbol = f"{row['symbol']}.AX"
-            if symbol in active_statuses:
+        for listing in listings:
+            yahoo_symbol = f"{listing['symbol']}.AX"
+            if yahoo_symbol in active_statuses:
                 filtered_listings.append({
-                    'symbol': row['symbol'],
-                    'company_name': row['companyName'],
-                    'industry': row['industry'],
-                    'market_cap': active_statuses[symbol]
+                    'symbol': listing['symbol'],
+                    'company_name': listing['company_name'],
+                    'industry': listing.get('industry', ''),
+                    'market_cap': active_statuses[yahoo_symbol]
                 })
 
         with open('data/asx_filtered_listings.json', 'w') as f:
@@ -342,14 +298,36 @@ async def update_all_listings(exchanges=None, incremental=False, start_date=None
     for exchange in exchanges_to_process:
         if exchange in all_exchanges:
             handler = all_exchanges[exchange]
-            if exchange == 'NYSE':
-                results[exchange] = await handler('data/nyse-listed.csv', 'NYSE', incremental, start_date, symbol)
-            elif exchange == 'NASDAQ':
-                results[exchange] = await handler('data/nasdaq-listed.csv', 'NASDAQ', incremental, start_date, symbol)
-            elif exchange == 'HKEX':
-                results[exchange] = await handler('data/hk_stocks_20250218_015522.csv', incremental, start_date, symbol)
-            else:  # ASX
-                results[exchange] = await handler('data/asx_valid_listings.json', incremental, start_date, symbol)
+            # Load and validate filtered listings for each exchange
+            try:
+                filtered_file = f'data/{exchange.lower()}_filtered_listings.json'
+                with open(filtered_file, 'r') as f:
+                    listings = json.load(f)
+                    
+                # Validate listings schema
+                required_fields = {'symbol', 'company_name', 'market_cap'}
+                if not all(isinstance(listing, dict) and all(field in listing for field in required_fields) for listing in listings):
+                    raise ValueError(f"Invalid listing format in {filtered_file}")
+                    
+                # Process filtered listings for each exchange
+                if exchange == 'NYSE':
+                    results[exchange] = await handler('data/nyse_filtered_listings.json', 'NYSE', incremental, start_date, symbol)
+                elif exchange == 'NASDAQ':
+                    results[exchange] = await handler('data/nasdaq_filtered_listings.json', 'NASDAQ', incremental, start_date, symbol)
+                elif exchange == 'HKEX':
+                    results[exchange] = await handler('data/hkex_filtered_listings.json', incremental, start_date, symbol)
+                else:  # ASX
+                    results[exchange] = await handler('data/asx_filtered_listings.json', incremental, start_date, symbol)
+                    
+            except FileNotFoundError:
+                logging.error(f"Filtered listings file not found for {exchange}")
+                results[exchange] = False
+            except json.JSONDecodeError:
+                logging.error(f"Invalid JSON format in filtered listings for {exchange}")
+                results[exchange] = False
+            except ValueError as e:
+                logging.error(str(e))
+                results[exchange] = False
         else:
             logging.error(f"Unknown exchange: {exchange}")
             results[exchange] = False
