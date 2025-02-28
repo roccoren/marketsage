@@ -4,7 +4,7 @@ import os
 import json
 from typing import List, Dict, Optional, Tuple
 from .base import Strategy
-from src.utils.logging_config import configure_logging, load_debug_config
+from utils.logging_config import configure_logging, load_debug_config
 
 # Load debug configuration
 debug_config = load_debug_config()
