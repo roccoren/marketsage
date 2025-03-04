@@ -131,25 +131,39 @@ multiple_markets = downloader.batch_download_markets(
 ```
 
 ### Command Line Usage
-
-The data downloader can also be used from the command line:
+The data downloader can be used from the command line with the following options:
 
 ```bash
-# Download a single stock
-python examples/stock_data_download_example.py -t AAPL -m NASDAQ -s 2023-01-01
+# Download data for all markets (NYSE and NASDAQ)
+python examples/market_data_download.py
 
-# Download multiple stocks in parallel
-python examples/stock_data_download_example.py -m NASDAQ -mt AAPL,MSFT,GOOGL -s 2023-01-01 -p -b 5
+# Download data for a specific market
+python examples/market_data_download.py -m NYSE
+python examples/market_data_download.py -m NASDAQ
 
-# Download multiple markets
-python examples/stock_data_download_example.py -ms NASDAQ,NYSE -s 2023-01-01 -p -b 10
+# Specify a start date (default is 30 days ago)
+python examples/market_data_download.py -s 2023-01-01
 
-# Run performance benchmark
-python examples/stock_data_download_example.py -bm
+# Control parallel processing
+python examples/market_data_download.py --no-parallel  # Disable parallel processing
+python examples/market_data_download.py -b 20          # Set batch size to 20 stocks
+python examples/market_data_download.py -w 8           # Set maximum worker threads to 8
 
-# Advanced options
-python examples/stock_data_download_example.py -m NASDAQ -mt AAPL,MSFT -s 2023-01-01 -p -b 5 -w 8 --no-daily
+# Disable daily file saving (only saves history.json)
+python examples/market_data_download.py --no-daily
+
+# Full example with all options
+python examples/market_data_download.py -m NASDAQ -s 2023-01-01 -b 20 -w 8 --no-daily
 ```
+
+Available command-line arguments:
+- `-m`, `--market`: Market to download (NYSE, NASDAQ, or ALL) [default: ALL]
+- `-s`, `--start`: Start date in YYYY-MM-DD format [default: 30 days ago]
+- `-p`, `--parallel`: Use parallel downloading [default: True]
+- `-np`, `--no-parallel`: Disable parallel downloading
+- `-b`, `--batch-size`: Number of stocks to download in each batch [default: 10]
+- `-w`, `--max-workers`: Maximum number of worker threads for parallel downloading
+- `-nd`, `--no-daily`: Do not save individual daily files
 
 ## Example
 

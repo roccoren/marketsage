@@ -7,11 +7,54 @@ Currently supports Yahoo Finance as the data source.
 import os
 import json
 import datetime
+import time
+import signal
+import logging
+import threading
 import concurrent.futures
 from typing import Dict, List, Optional, Union, Tuple
 import yfinance as yf
 import pandas as pd
 from pathlib import Path
+
+
+# Configure logging
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+logging.basicConfig(level=logging.INFO, format=log_format)
+logger = logging.getLogger(__name__)
+
+# Add file handler
+os.makedirs('logs', exist_ok=True)
+file_handler = logging.FileHandler('logs/stock_downloader.log')
+file_handler.setFormatter(logging.Formatter(log_format))
+logger.addHandler(file_handler)
+
+class RateLimiter:
+    """Rate limiter for API calls."""
+    def __init__(self, calls_per_second=5):
+        self.calls_per_second = calls_per_second
+        self.minimum_interval = 1.0 / calls_per_second
+        self.last_call = 0
+        self._lock = threading.Lock()
+
+    def acquire(self):
+        """Wait if necessary to maintain rate limit."""
+        with self._lock:
+            now = time.time()
+            if self.last_call:
+                time_since_last = now - self.last_call
+                if time_since_last < self.minimum_interval:
+                    time.sleep(self.minimum_interval - time_since_last)
+            self.last_call = time.time()
+
+def print_progress(current, total, prefix='Progress:', suffix='Complete'):
+    """Print progress bar."""
+    length = 50
+    filled = int(length * current // total)
+    bar = '█' * filled + '-' * (length - filled)
+    print(f'\r{prefix} |{bar}| {current}/{total} {suffix}', end='\r')
+    if current == total:
+        print()
 
 
 class StockDataDownloader:
@@ -29,6 +72,8 @@ class StockDataDownloader:
         "ASX": ".AX",        # Australian Stock Exchange suffix
         "HKEX": ".HK"        # Hong Kong Stock Exchange suffix
     }
+    
+    MAX_RETRIES = 3
     
     def __init__(self, base_data_dir: str = None, max_workers: int = None):
         """
@@ -55,6 +100,9 @@ class StockDataDownloader:
         
         # Set up parallel processing parameters
         self.max_workers = max_workers
+        
+        # Set up rate limiter
+        self.rate_limiter = RateLimiter(calls_per_second=5)
     
     def download_stock_data(self, 
                            ticker: str, 
@@ -98,74 +146,83 @@ class StockDataDownloader:
         elif isinstance(end_date, str):
             end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
         
-        try:
-            # Download data from Yahoo Finance
-            stock = yf.Ticker(full_ticker)
-            df = stock.history(start=start_date, end=end_date)
-            
-            if df.empty:
-                raise RuntimeError(f"No data retrieved for {ticker} ({market})")
-            
-            # Set up market directory
-            if save_dir is None:
-                market_dir = self.base_data_dir / market
-            else:
-                market_dir = Path(save_dir)
-            
-            # Create market directory if it doesn't exist
-            market_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Create ticker-specific subdirectory
-            ticker_dir = market_dir / ticker
-            ticker_dir.mkdir(parents=True, exist_ok=True)
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Apply rate limiting
+                self.rate_limiter.acquire()
                 
-            # Process and save each day's data separately
-            results = {}
-            if save_daily:
-                for date, day_data in df.iterrows():
-                    data_date = date.strftime("%Y-%m-%d")
+                # Download data from Yahoo Finance
+                stock = yf.Ticker(full_ticker)
+                df = stock.history(start=start_date, end=end_date)
+                
+                if df.empty:
+                    raise RuntimeError(f"No data retrieved for {ticker} ({market})")
+                
+                # Set up market directory
+                if save_dir is None:
+                    market_dir = self.base_data_dir / market
+                else:
+                    market_dir = Path(save_dir)
+                
+                # Create market directory if it doesn't exist
+                market_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create ticker-specific subdirectory
+                ticker_dir = market_dir / ticker
+                ticker_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Create data dictionary
-                    history_item = {
-                        "date": data_date,
+                # Process and save each day's data separately
+                results = {}
+                if save_daily:
+                    for date, day_data in df.iterrows():
+                        data_date = date.strftime("%Y-%m-%d")
+                        
+                        # Create data dictionary
+                        history_item = {
+                            "date": data_date,
+                            "open": float(day_data["Open"]),
+                            "high": float(day_data["High"]),
+                            "low": float(day_data["Low"]),
+                            "close": float(day_data["Close"]),
+                            "volume": float(day_data["Volume"])
+                        }
+                        
+                        # Save as JSON file in the ticker's directory only
+                        daily_filename = f"{data_date}.json"
+                        daily_path = ticker_dir / daily_filename
+                        
+                        with open(daily_path, 'w') as f:
+                            json.dump({"history": [history_item]}, f, indent=2)
+                        
+                        # Add to results
+                        results[data_date] = history_item
+                    
+                # Also save the full historical data in the standard format
+                full_data = {"history": [
+                    {
+                        "date": date.strftime("%Y-%m-%d"),
                         "open": float(day_data["Open"]),
                         "high": float(day_data["High"]),
                         "low": float(day_data["Low"]),
                         "close": float(day_data["Close"]),
                         "volume": float(day_data["Volume"])
-                    }
-                    
-                    # Save as JSON file in the ticker's directory only
-                    daily_filename = f"{data_date}.json"
-                    daily_path = ticker_dir / daily_filename
-                    
-                    with open(daily_path, 'w') as f:
-                        json.dump({"history": [history_item]}, f, indent=2)
-                    
-                    # Add to results
-                    results[data_date] = history_item
+                    } for date, day_data in df.iterrows()
+                ]}
                 
-            # Also save the full historical data in the standard format
-            full_data = {"history": [
-                {
-                    "date": date.strftime("%Y-%m-%d"),
-                    "open": float(day_data["Open"]),
-                    "high": float(day_data["High"]),
-                    "low": float(day_data["Low"]),
-                    "close": float(day_data["Close"]),
-                    "volume": float(day_data["Volume"])
-                } for date, day_data in df.iterrows()
-            ]}
-            
-            # Save complete history to ticker-specific folder
-            ticker_file = ticker_dir / "history.json"
-            with open(ticker_file, 'w') as f:
-                json.dump(full_data, f, indent=2)
-                
-            return full_data
-                
-        except Exception as e:
-            raise RuntimeError(f"Failed to download data for {ticker} ({market}): {str(e)}")
+                # Save complete history to ticker-specific folder
+                ticker_file = ticker_dir / "history.json"
+                with open(ticker_file, 'w') as f:
+                    json.dump(full_data, f, indent=2)
+                    
+                return full_data
+                    
+            except Exception as e:
+                if attempt == self.MAX_RETRIES - 1:
+                    logger.error(f"Failed to download data for {ticker} ({market}) after {self.MAX_RETRIES} attempts: {str(e)}")
+                    raise RuntimeError(f"Failed to download data for {ticker} ({market}): {str(e)}")
+                wait_time = (2 ** attempt) + 1
+                logger.warning(f"Attempt {attempt + 1} failed for {ticker}. Retrying in {wait_time}s. Error: {str(e)}")
+                time.sleep(wait_time)
     
     def _download_stock_worker(self, args: Tuple[str, str, Union[str, datetime.date], 
                                                Optional[Union[str, datetime.date]], Optional[str], bool]) -> Tuple[str, Dict, Exception]:
@@ -214,6 +271,8 @@ class StockDataDownloader:
             ValueError: If market is not supported
         """
         results = {}
+        total_tickers = len(tickers)
+        processed = 0
         
         # Validate market
         if market not in self.MARKET_CODES:
@@ -224,17 +283,20 @@ class StockDataDownloader:
             # Sequential download
             for ticker in tickers:
                 try:
-                    print(f"Downloading data for {ticker} ({market})...")
+                    logger.info(f"Downloading data for {ticker} ({market})...")
+                    self.rate_limiter.acquire()
                     data = self.download_stock_data(ticker, market, start_date, end_date, save_dir, save_daily)
                     results[ticker] = data
-                    print(f"Successfully downloaded data for {ticker}")
+                    processed += 1
+                    print_progress(processed, total_tickers, prefix=f'{market} Progress:')
+                    logger.info(f"Successfully downloaded data for {ticker}")
                 except Exception as e:
-                    print(f"Error downloading {ticker}: {str(e)}")
+                    logger.error(f"Error downloading {ticker}: {str(e)}")
         else:
             # Parallel download with batching
             for i in range(0, len(tickers), batch_size):
                 batch_tickers = tickers[i:i+batch_size]
-                print(f"Processing batch {i//batch_size + 1}/{(len(tickers) + batch_size - 1)//batch_size} ({len(batch_tickers)} stocks)")
+                logger.info(f"Processing batch {i//batch_size + 1}/{(len(tickers) + batch_size - 1)//batch_size} ({len(batch_tickers)} stocks)")
                 
                 worker_args = [(ticker, market, start_date, end_date, save_dir, save_daily) for ticker in batch_tickers]
                 
@@ -243,16 +305,15 @@ class StockDataDownloader:
                     
                     for future in concurrent.futures.as_completed(future_to_ticker):
                         ticker, data, error = future.result()
+                        processed += 1
                         if error:
-                            print(f"Error downloading {ticker}: {str(error)}")
+                            logger.error(f"Error downloading {ticker}: {str(error)}")
                         else:
                             results[ticker] = data
-                            print(f"Successfully downloaded data for {ticker}")
+                            logger.info(f"Successfully downloaded data for {ticker}")
+                        print_progress(processed, total_tickers, prefix=f'{market} Progress:')
                 
-                # If not the last batch, add a small delay to prevent rate limiting
-                if i + batch_size < len(tickers):
-                    import time
-                    time.sleep(1)  # Small delay between batches
+                # Rate limiting between batches is handled by RateLimiter in download_stock_data
         
         return results
     
@@ -297,6 +358,7 @@ class StockDataDownloader:
                 listings = json.load(f)
             
             tickers = [listing["symbol"] for listing in listings]
+            logger.info(f"Found {len(tickers)} symbols in {list_file}")
             
             # Default to downloading the last 30 days if not specified
             if start_date is None:
@@ -308,6 +370,7 @@ class StockDataDownloader:
             )
             
         except Exception as e:
+            logger.error(f"Failed to download market data: {str(e)}")
             raise RuntimeError(f"Failed to download market data: {str(e)}")
     
     def batch_download_markets(self, 
@@ -335,6 +398,7 @@ class StockDataDownloader:
             ValueError: If any market is not supported
         """
         results = {}
+        start_time = time.time()
         
         for market in markets:
             if market not in self.MARKET_CODES:
@@ -343,16 +407,18 @@ class StockDataDownloader:
         
         for market in markets:
             try:
-                print(f"\n===== Downloading data for {market} market =====\n")
+                logger.info(f"\n===== Downloading data for {market} market =====\n")
                 market_data = self.download_market_list(
                     market, start_date=start_date, end_date=end_date,
                     parallel=parallel, batch_size=batch_size, save_daily=save_daily
                 )
                 results[market] = market_data
-                print(f"\n===== Completed downloading {market} market data =====\n")
+                logger.info(f"\n===== Completed downloading {market} market data =====\n")
             except Exception as e:
-                print(f"Error downloading {market} market data: {str(e)}")
+                logger.error(f"Error downloading {market} market data: {str(e)}")
         
+        total_time = time.time() - start_time
+        logger.info(f"Batch download completed in {total_time:.2f} seconds")
         return results
         
     def download_from_json_files(self,
@@ -388,6 +454,7 @@ class StockDataDownloader:
             )
         """
         results = {}
+        start_time = time.time()
         
         # Default to downloading the last 30 days if not specified
         if start_date is None:
@@ -398,7 +465,7 @@ class StockDataDownloader:
                 file_path = Path(file_path)
                 
                 if not file_path.exists():
-                    print(f"Warning: File {file_path} not found, skipping")
+                    logger.warning(f"File {file_path} not found, skipping")
                     continue
                 
                 # Determine market from filename
@@ -411,16 +478,18 @@ class StockDataDownloader:
                     if market_name in self.MARKET_CODES:
                         market = market_name
                     else:
-                        raise ValueError(f"Cannot determine market from filename: {file_path.name}")
+                        logger.error(f"Cannot determine market from filename: {file_path.name}")
+                        continue
                 
-                print(f"\n===== Loading symbols from {file_path} for {market} market =====\n")
+                logger.info(f"\n===== Loading symbols from {file_path} for {market} market =====\n")
                 
                 # Load listings from JSON file
                 with open(file_path, 'r') as f:
                     listings = json.load(f)
                 
                 if not isinstance(listings, list):
-                    raise ValueError(f"Expected list of symbols in {file_path}, got {type(listings)}")
+                    logger.error(f"Expected list of symbols in {file_path}, got {type(listings)}")
+                    continue
                 
                 # Extract ticker symbols from the JSON structure
                 # Support different formats: {"Symbol": "AAPL"} or {"symbol": "AAPL"}
@@ -432,10 +501,10 @@ class StockDataDownloader:
                         tickers.append(item["symbol"])
                 
                 if not tickers:
-                    print(f"No ticker symbols found in {file_path}")
+                    logger.warning(f"No ticker symbols found in {file_path}")
                     continue
                 
-                print(f"Found {len(tickers)} ticker symbols in {file_path}")
+                logger.info(f"Found {len(tickers)} ticker symbols in {file_path}")
                 
                 # Download data for the tickers
                 market_data = self.download_multiple_stocks(
@@ -444,11 +513,13 @@ class StockDataDownloader:
                 )
                 
                 results[market] = market_data
-                print(f"\n===== Completed downloading data for {len(market_data)} {market} stocks =====\n")
+                logger.info(f"\n===== Completed downloading data for {len(market_data)} {market} stocks =====\n")
                 
             except Exception as e:
-                print(f"Error processing {file_path}: {str(e)}")
+                logger.error(f"Error processing {file_path}: {str(e)}")
         
+        total_time = time.time() - start_time
+        logger.info(f"Process completed in {total_time:.2f} seconds")
         return results
 
 if __name__ == "__main__":
