@@ -1,3 +1,6 @@
+# Initialize utils package
+# This file makes the directory a Python package
+
 """Utility modules for the stock scanner application."""
 
 from .async_utils import (

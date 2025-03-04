@@ -323,40 +323,43 @@ def save_results(backtest_results: dict, optimal_params: dict, recent_signals: d
     logger.info(f"Results saved to output directory with timestamp {timestamp}")
 
 
+import argparse
+
 def main():
     """Main execution function"""
+    parser = argparse.ArgumentParser(description="Run NYSE backtest system")
+    parser.add_argument('--params', type=str, required=True, help='Path to JSON file with strategy parameters')
+    parser.add_argument('--symbols', type=str, required=True, help='Comma-separated list of stock symbols')
+    parser.add_argument('--start-date', type=str, required=True, help='Start date for data in format YYYY-MM-DD')
+    args = parser.parse_args()
+
     try:
         # 1. Load NYSE stock data
-        stock_data = load_nyse_data(start_date='2020-01-01')
+        stock_data = load_nyse_data(start_date=args.start_date)
         if not stock_data:
             logger.error("No stock data loaded. Exiting.")
             return
-            
-        # 2. Optimize strategy parameters using a representative stock
-        # Using the first stock as training data
-        training_symbol = list(stock_data.keys())[0]
-        logger.info(f"Using {training_symbol} as training data for optimization")
-        training_data = stock_data[training_symbol]
         
-        # Optimize strategy parameters
-        optimal_params = optimize_strategy(training_data)
-        if not optimal_params:
-            logger.error("Strategy optimization failed. Exiting.")
-            return
-            
-        # 3. Run parallel backtests with optimized parameters
-        backtest_results = run_parallel_backtest(stock_data, optimal_params)
+        # 2. Load strategy parameters
+        with open(args.params, 'r') as f:
+            optimal_params = json.load(f)
         
-        # 4. Analyze recent trading signals (last 7 days)
-        recent_signals = analyze_recent_signals(stock_data, optimal_params)
+        # 3. Filter stock data for specified symbols
+        filtered_stock_data = {symbol: stock_data[symbol] for symbol in args.symbols.split(',') if symbol in stock_data}
         
-        # 5. Calculate performance summary
+        # 4. Run parallel backtests with provided parameters
+        backtest_results = run_parallel_backtest(filtered_stock_data, optimal_params)
+        
+        # 5. Analyze recent trading signals (last 7 days)
+        recent_signals = analyze_recent_signals(filtered_stock_data, optimal_params)
+        
+        # 6. Calculate performance summary
         summary = calculate_performance_summary(backtest_results)
         
-        # 6. Save results
+        # 7. Save results
         save_results(backtest_results, optimal_params, recent_signals, summary)
         
-        # 7. Display results summary
+        # 8. Display results summary
         logger.info("\n=== Backtest Results Summary ===")
         print(f"\nAverage Performance Metrics:")
         print(f"Sharpe Ratio: {summary['avg_sharpe_ratio']:.2f}")
