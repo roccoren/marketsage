@@ -2,9 +2,10 @@ from decimal import Decimal
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
-
-from .trading_system import TradingSystem
-from .strategy.trend_following_strategy import TrendFollowingStrategy
+print(f"Relative import debug - __name__: {__name__}")
+print(f"Relative import debug - __package__: {__package__}")
+from market_system.trading_system import TradingSystem
+from market_system.strategy.trend_following_strategy import TrendFollowingStrategy
 
 def generate_sample_data(symbol: str, days: int = 100) -> pd.DataFrame:
     """Generate sample market data for testing."""
@@ -55,7 +56,7 @@ def main():
         df = generate_sample_data(symbol)
         
         # Convert to MarketData objects
-        from .domain.models import MarketData
+        from market_system.domain.models import MarketData
         
         market_data[symbol] = [
             MarketData(

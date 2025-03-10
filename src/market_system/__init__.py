@@ -9,8 +9,8 @@ This package provides a comprehensive framework for:
 - Performance monitoring
 """
 
-from .trading_system import TradingSystem
-from .domain.models import (
+from market_system.trading_system import TradingSystem
+from market_system.domain.models import (
     MarketState,
     MarketData,
     Position,
@@ -18,8 +18,8 @@ from .domain.models import (
     RiskMetrics,
     StrategyPerformance
 )
-from .strategy.base_strategy import BaseStrategy
-from .strategy.trend_following_strategy import TrendFollowingStrategy
+from market_system.strategy.base_strategy import BaseStrategy
+from market_system.strategy.trend_following_strategy import TrendFollowingStrategy
 
 __version__ = '0.1.0'
 __author__ = 'Your Name'

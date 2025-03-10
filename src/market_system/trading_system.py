@@ -3,11 +3,11 @@ from decimal import Decimal
 import logging
 from datetime import datetime
 
-from .domain.models import MarketData, Signal, Position, MarketState
-from .data_pipeline.market_data_service import MarketDataService
-from .analysis.market_classifier import MarketClassifier
-from .strategy.base_strategy import BaseStrategy
-from .risk.position_manager import PositionManager
+from market_system.domain.models import MarketData, Signal, Position, MarketState
+from market_system.data_pipeline.market_data_service import MarketDataService
+from market_system.analysis.market_classifier import MarketClassifier
+from market_system.strategy.base_strategy import BaseStrategy
+from market_system.risk.position_manager import PositionManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

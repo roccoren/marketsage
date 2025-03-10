@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional
 from datetime import datetime
+import logging
 import pandas as pd
 import pandas_ta as ta
 from ..domain.models import MarketData
@@ -26,6 +27,8 @@ class MarketDataService:
         Returns:
             List of processed MarketData objects
         """
+        logging.info(f"Processing market data for {symbol}")
+        logging.info(f"Input data type: {type(data)}")
         # Ensure data is properly sorted
         data = data.sort_index()
         
