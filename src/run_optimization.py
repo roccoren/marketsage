@@ -5,6 +5,7 @@ from pathlib import Path
 import logging
 from strategies.strategy_optimizer import AdvancedStrategyOptimizer
 from utils.technical_indicators import TechnicalIndicators
+from stock_data_fetcher.yahoo_finance_client import YahooFinanceClient
 
 # Configure logging
 logging.basicConfig(

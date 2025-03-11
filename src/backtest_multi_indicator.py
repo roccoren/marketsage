@@ -9,6 +9,7 @@ from .utils.technical_indicators import TechnicalIndicators
 import matplotlib.pyplot as plt
 import logging
 from utils.backtest_formatter import display_results
+from stock_data_fetcher.yahoo_finance_client import YahooFinanceClient
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

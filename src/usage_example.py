@@ -3,11 +3,17 @@ from strategies.strategy_rsi_stochastic import RSIStochStrategy
 from strategies.strategy_atr_moving_average import ATRMovingAverageStrategy
 from strategies.strategy_adx_macd_cci import ADXMACDCCI_Strategy
 from strategies.strategy_obv import OBVStrategy
+from stock_data_fetcher.yahoo_finance_client import YahooFinanceClient
 
 # Configure logging to display debug information
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-def run_strategies():
+async def fetch_stock_data():
+    async with YahooFinanceClient() as client:
+        data = await client.get_history("AAPL", "2022-01-01", "2022-12-31")
+        print(data)
+
+async def run_strategies():
     strategies = [
         {
             "name": "RSI/Stochastic Strategy",
@@ -40,4 +46,5 @@ def run_strategies():
         print(f"{name} signal: {signal}")
 
 if __name__ == "__main__":
-    run_strategies()
+    import asyncio
+    asyncio.run(run_strategies())

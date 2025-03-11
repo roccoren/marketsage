@@ -207,3 +207,104 @@ python -m pytest tests/
 ```
 
 The project uses a src-layout pattern for better package organization and distribution. All source code is under the `src/` directory, with proper package imports within the codebase.
+
+## How to use the standalone API
+
+This guide will help you understand how to use the standalone API for fetching stock data using the `YahooFinanceClient`.
+
+### Installation
+
+* Clone the repository and navigate to the project directory:
+  ```bash
+  git clone <repository-url>
+  cd stockscan
+  ```
+
+* Create a virtual environment (optional but recommended):
+  ```bash
+  python -m venv venv
+  source venv/bin/activate  # On Windows: venv\Scripts\activate
+  ```
+
+* Install the required packages:
+  ```bash
+  pip install -r config/requirements.txt
+  ```
+
+### Running the API
+
+* Navigate to the `src/api_provider` directory:
+  ```bash
+  cd src/api_provider
+  ```
+
+* Start the FastAPI server:
+  ```bash
+  uvicorn main:app --reload
+  ```
+
+  This will start the server on `http://127.0.0.1:8000`.
+
+### API Endpoints
+
+#### Fetch Stock Data
+
+* **Endpoint**: `/fetch_stock_data`
+* **Method**: `POST`
+* **Request Body**:
+  ```json
+  {
+    "symbols": ["AAPL", "GOOGL"],
+    "start_date": "2022-01-01",
+    "end_date": "2022-12-31"
+  }
+  ```
+  - `symbols`: List of stock symbols to fetch data for.
+  - `start_date` (optional): Start date for fetching historical data.
+  - `end_date` (optional): End date for fetching historical data.
+
+* **Response**:
+  ```json
+  {
+    "AAPL": {
+      "history": [
+        {
+          "date": "2022-01-03",
+          "open": 177.83,
+          "high": 182.88,
+          "low": 177.71,
+          "close": 182.01,
+          "volume": 104487900
+        },
+        ...
+      ]
+    },
+    "GOOGL": {
+      "history": [
+        {
+          "date": "2022-01-03",
+          "open": 2897.04,
+          "high": 2928.96,
+          "low": 2881.00,
+          "close": 2896.54,
+          "volume": 1552900
+        },
+        ...
+      ]
+    }
+  }
+  ```
+
+### Example Usage
+
+You can use tools like `curl` or Postman to test the API. Here is an example using `curl`:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/fetch_stock_data" -H "Content-Type: application/json" -d '{
+  "symbols": ["AAPL", "GOOGL"],
+  "start_date": "2022-01-01",
+  "end_date": "2022-12-31"
+}'
+```
+
+This will fetch the historical stock data for the specified symbols and date range.

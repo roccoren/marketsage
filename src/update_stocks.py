@@ -12,7 +12,7 @@ import os
 import signal
 from datetime import date, datetime, timedelta
 import re
-from utils.async_utils import YahooFinanceClient
+from stock_data_fetcher.yahoo_finance_client import YahooFinanceClient
 from contextlib import asynccontextmanager
 
 # Enhanced logging configuration

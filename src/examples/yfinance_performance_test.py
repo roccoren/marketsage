@@ -14,7 +14,7 @@ import time
 import logging
 import yfinance as yf
 from datetime import datetime, timedelta
-from src.utils.async_utils import YahooFinanceClient
+from stock_data_fetcher.yahoo_finance_client import YahooFinanceClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

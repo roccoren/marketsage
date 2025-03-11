@@ -15,7 +15,7 @@ import aiofiles
 from concurrent.futures import ThreadPoolExecutor
 
 from src.strategies.base import Strategy
-from src.utils.async_utils import YahooFinanceClient, CircuitBreaker, UpdateProgressTracker
+from stock_data_fetcher.yahoo_finance_client import YahooFinanceClient, CircuitBreaker, UpdateProgressTracker
 from src.utils.data_cleaner import clean_historical_data
 from src.utils.filename_generator import FilenameGenerator
 
