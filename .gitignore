@@ -49,3 +49,10 @@ logs/
 *.csv
 *.json
 *.db
+
+# Python Caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
