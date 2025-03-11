@@ -43,47 +43,86 @@ pip install -e src/market_data
 ## Quick Start
 
 ```python
+"""Example demonstrating usage of the market data package with Yahoo Finance."""
+import os
+from datetime import datetime, timedelta
 import asyncio
-from datetime import datetime
 from market_data.providers.yahoo import YahooFinanceProvider
-from market_data.models.common import ProviderConfig, RateLimitConfig, CacheConfig
+from market_data.models.common import (
+    ProviderConfig,
+    CacheConfig,
+    RateLimitConfig
+)
+from market_data.exceptions import (
+    DataNotFoundError,
+    ConnectionError,
+    ValidationError
+)
 
 async def main():
-    # Configure the provider
+    # Ensure cache directory exists
+    cache_dir = "./data/cache"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Initialize provider configuration
     config = ProviderConfig(
         name="yahoo",
-        rate_limit=RateLimitConfig(
-            requests_per_second=2.0,
-            burst_size=5
-        ),
         cache=CacheConfig(
             enabled=True,
-            ttl=3600,  # 1 hour
-            directory="./cache"
+            directory=cache_dir,
+            ttl=24 * 3600  # 1 day cache
+        ),
+        rate_limit=RateLimitConfig(
+            requests_per_second=0.2,  # Conservative rate limiting
+            burst_size=1,
+            retry_after=5  # Wait 5 seconds after hitting rate limit
         )
     )
     
-    # Create provider instance
+    # Initialize the provider
     provider = YahooFinanceProvider(config)
-    
-    # Fetch historical data
-    start_date = datetime(2024, 1, 1)
-    end_date = datetime(2024, 1, 31)
+
+    # Define time range for historical data
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=7)  # Last week of data
     
     try:
-        data = await provider.get_history("AAPL", start_date, end_date)
-        print(f"Retrieved {len(data.data)} data points")
+        # First try to get ticker info
+        symbol = "AAPL"
+        info = await provider.get_ticker_info(symbol)
+        print(f"Found ticker: {info.name} ({info.exchange})")
+
+        # Then fetch historical data
+        result = await provider.get_history(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date
+        )
         
-        # Fetch multiple symbols
-        symbols = ["AAPL", "MSFT", "GOOGL"]
-        batch_data = await provider.get_history_batch(symbols, start_date, end_date)
-        
-        for symbol, result in batch_data.items():
-            if result:
-                print(f"{symbol}: {len(result.data)} data points")
-                
+        if result and result.data:
+            print(f"\nData summary for {symbol}:")
+            print(f"Period: {result.start_date.strftime('%Y-%m-%d')} to {result.end_date.strftime('%Y-%m-%d')}")
+            print(f"Number of data points: {len(result.data)}")
+            
+            # Show latest trading day
+            latest = result.data[-1]
+            print(f"\nLatest trading day ({latest.date.strftime('%Y-%m-%d')}):")
+            print(f"Open:     ${latest.open:.2f}")
+            print(f"Close:    ${latest.close:.2f}")
+            print(f"Volume:   {latest.volume:,}")
+            
+    except ValidationError as e:
+        print(f"Invalid symbol: {str(e)}")
+    except DataNotFoundError as e:
+        print(f"No data found: {str(e)}")
+    except ConnectionError as e:
+        print(f"Connection error: {str(e)}")
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Unexpected error: {str(e)}")
+    finally:
+        # Cleanup resources
+        if hasattr(provider, '__del__'):
+            provider.__del__()
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -144,7 +183,11 @@ from market_data.exceptions import (
 )
 
 try:
-    data = await provider.get_history(...)
+    # First validate the symbol
+    info = await provider.get_ticker_info(symbol)
+    
+    # Then get historical data
+    data = await provider.get_history(symbol, start_date, end_date)
 except RateLimitError:
     print("Rate limit exceeded")
 except CircuitBreakerError:
@@ -153,6 +196,8 @@ except ValidationError as e:
     print(f"Invalid input: {str(e)}")
 except DataNotFoundError:
     print("No data available")
+except ConnectionError as e:
+    print(f"Connection failed: {str(e)}")
 ```
 
 ## Adding New Providers

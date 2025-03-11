@@ -4,11 +4,11 @@
 """Utility modules for the stock scanner application."""
 
 from .async_utils import (
-    YahooFinanceClient,
     TokenBucket,
     CircuitBreaker,
     UpdateProgressTracker
 )
+from src.stock_data_fetcher.yahoo_finance_client import YahooFinanceClient
 
 from .filename_generator import FilenameGenerator, InvalidPatternError
 
