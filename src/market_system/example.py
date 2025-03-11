@@ -1,3 +1,12 @@
+import sys
+import logging
+from pathlib import Path
+# Add src directory to path
+src_path = str(Path(__file__).parent.parent.absolute())
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+    print(f"Added {src_path} to Python path")
+
 from decimal import Decimal
 import pandas as pd
 from datetime import datetime, timedelta
@@ -38,6 +47,16 @@ def generate_sample_data(symbol: str, days: int = 100) -> pd.DataFrame:
     return data
 
 def main():
+    # Configure logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        stream=sys.stdout
+    )
+
+    # Force immediate flushing of stdout
+    sys.stdout.flush()
+    
     # Initialize trading system with 100,000 initial capital
     trading_system = TradingSystem(Decimal('100000'))
     
@@ -51,6 +70,7 @@ def main():
     
     for symbol in symbols:
         print(f"\nProcessing data for {symbol}...")
+        sys.stdout.flush()
         
         # Generate sample data
         df = generate_sample_data(symbol)
@@ -78,6 +98,7 @@ def main():
         # Print current market state
         state = trading_system.get_market_state(symbol)
         print(f"Current market state for {symbol}: {state.name if state else 'Unknown'}")
+        sys.stdout.flush()
     
     # Print current positions
     positions = trading_system.get_current_positions()
@@ -87,6 +108,7 @@ def main():
             print(f"{symbol}: {position.quantity} @ {position.entry_price}")
     else:
         print("\nNo open positions")
+    sys.stdout.flush()
     
     # Print risk metrics
     risk_metrics = trading_system.get_risk_metrics()
@@ -95,6 +117,7 @@ def main():
     print(f"Current Exposure: {risk_metrics.current_exposure:.2%}")
     print(f"Value at Risk (95%): {risk_metrics.var_95}")
     print(f"Current Volatility: {risk_metrics.current_volatility:.2%}")
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     main()

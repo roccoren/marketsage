@@ -10,6 +10,7 @@ class MarketState(Enum):
     RANGING = "RANGING"
     GAP_UP = "GAP_UP"
     GAP_DOWN = "GAP_DOWN"
+    CONSOLIDATING = "CONSOLIDATING"  # For mixed/conflicting signals
     UNDEFINED = "UNDEFINED"
 
 @dataclass

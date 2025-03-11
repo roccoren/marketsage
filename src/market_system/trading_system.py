@@ -9,7 +9,6 @@ from market_system.analysis.market_classifier import MarketClassifier
 from market_system.strategy.base_strategy import BaseStrategy
 from market_system.risk.position_manager import PositionManager
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class TradingSystem:
@@ -50,6 +49,8 @@ class TradingSystem:
         try:
             # Process and store market data
             processed_data = self._market_data_service.process_market_data(symbol, data)
+            logger.debug(f"Processed data for {symbol}:")
+            logger.debug(f"Sample indicators: {processed_data[-1].indicators if processed_data else 'No data'}")
             self._latest_data[symbol] = processed_data
             
             # Update positions with new market data
@@ -63,8 +64,9 @@ class TradingSystem:
             market_state, confidence = self._market_classifier.classify_market_state(processed_data)
             self._market_states[symbol] = market_state
             
-            logger.info(f"Market state for {symbol}: {market_state.name} "
-                       f"(confidence: {confidence:.2f})")
+            logger.info(f"Market state for {symbol}: {market_state.name} (confidence: {confidence:.2f})")
+            if market_state == MarketState.UNDEFINED:
+                logger.debug(f"UNDEFINED state detected for {symbol}. Last data point indicators: {processed_data[-1].indicators if processed_data else 'No data'}")
             
             # Generate and process trading signals
             self._process_trading_signals(symbol)

@@ -16,19 +16,22 @@ class MarketDataService:
             'atr': [14]            # Average True Range
         }
 
-    def process_market_data(self, symbol: str, data: pd.DataFrame) -> List[MarketData]:
+    def process_market_data(self, symbol: str, data: List[MarketData]) -> List[MarketData]:
         """
         Process raw market data and calculate technical indicators.
         
         Args:
             symbol: Trading symbol
-            data: DataFrame with OHLCV data
+            data: List of MarketData objects
         
         Returns:
             List of processed MarketData objects
         """
         logging.info(f"Processing market data for {symbol}")
         logging.info(f"Input data type: {type(data)}")
+        
+        # Convert List[MarketData] to DataFrame
+        data = self._to_dataframe(data)
         # Ensure data is properly sorted
         data = data.sort_index()
         
@@ -112,3 +115,24 @@ class MarketDataService:
             
         data = self._data_cache[symbol].tail(lookback)
         return self._to_market_data(symbol, data)
+
+    def _to_dataframe(self, data: List[MarketData]) -> pd.DataFrame:
+        """Convert list of MarketData objects to DataFrame."""
+        df_data = {
+            'open': [],
+            'high': [],
+            'low': [],
+            'close': [],
+            'volume': []
+        }
+        timestamps = []
+        
+        for item in data:
+            timestamps.append(item.timestamp)
+            df_data['open'].append(float(item.open_price))
+            df_data['high'].append(float(item.high_price))
+            df_data['low'].append(float(item.low_price))
+            df_data['close'].append(float(item.close_price))
+            df_data['volume'].append(item.volume)
+        
+        return pd.DataFrame(df_data, index=timestamps)
