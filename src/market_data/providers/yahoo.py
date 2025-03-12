@@ -94,10 +94,19 @@ class YahooFinanceProvider(BaseMarketDataProvider):
         market_data = []
         
         for index, row in df.iterrows():
-            # Validate data
-            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-                if pd.isna(row[col]):
-                    continue
+            # Skip rows with missing essential data
+            if any(pd.isna(row[col]) for col in ['Open', 'High', 'Low', 'Close', 'Volume']):
+                continue
+            
+            adjusted = None
+            if 'Adj Close' in row and not pd.isna(row['Adj Close']):
+                adjusted = float(row['Adj Close'])
+            else:
+                adjusted = float(row['Close'])
+            
+            # Get dividends and stock splits if available
+            dividends = float(row['Dividends']) if 'Dividends' in row and not pd.isna(row['Dividends']) else 0.0
+            splits = float(row['Stock Splits']) if 'Stock Splits' in row and not pd.isna(row['Stock Splits']) else 0.0
             
             data = MarketData(
                 date=index.to_pydatetime(),
@@ -106,7 +115,9 @@ class YahooFinanceProvider(BaseMarketDataProvider):
                 low=float(row['Low']),
                 close=float(row['Close']),
                 volume=float(row['Volume']),
-                adjusted_close=float(row['Close'])  # Using adjusted prices
+                dividends=dividends,
+                stock_splits=splits,
+                adjusted_close=adjusted
             )
             market_data.append(data)
             

@@ -12,6 +12,8 @@ class MarketData:
     low: float
     close: float
     volume: float
+    dividends: Optional[float] = 0.0
+    stock_splits: Optional[float] = 0.0
     adjusted_close: Optional[float] = None
 
 @dataclass
