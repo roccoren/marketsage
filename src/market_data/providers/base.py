@@ -9,6 +9,7 @@ from ..models.common import (
     MarketData,
     HistoricalData,
     TickerInfo,
+    RealTimeQuote,
     RequestParams,
     ProviderConfig
 )
@@ -16,7 +17,8 @@ from ..exceptions import (
     ValidationError,
     InvalidSymbolError,
     InvalidDateRangeError,
-    DataNotFoundError
+    DataNotFoundError,
+    ConnectionError
 )
 from ..rate_limiting.token_bucket import TokenBucket
 from ..rate_limiting.circuit_breaker import CircuitBreaker
@@ -79,6 +81,26 @@ class BaseMarketDataProvider(MarketDataProvider):
         Fetch ticker information from provider.
         
         This method must be implemented by provider classes.
+        """
+        pass
+
+    @abstractmethod
+    async def _fetch_real_time_quote(self, symbol: str) -> RealTimeQuote:
+        """
+        Fetch real-time quote from provider.
+        
+        This method must be implemented by provider classes.
+        
+        Args:
+            symbol: Clean symbol string
+            
+        Returns:
+            RealTimeQuote object
+            
+        Raises:
+            DataNotFoundError: If quote cannot be retrieved
+            ConnectionError: If provider connection fails
+            ValidationError: If symbol is invalid
         """
         pass
 
@@ -288,3 +310,85 @@ class BaseMarketDataProvider(MarketDataProvider):
             )
             
         return info
+
+    async def get_real_time_quote(self, symbol: str) -> RealTimeQuote:
+        """
+        Fetch real-time quote for a single symbol.
+        
+        Args:
+            symbol: The symbol to fetch quote for
+            
+        Returns:
+            RealTimeQuote object with current market data
+        """
+        symbol = self._validate_symbol(symbol)
+        
+        # Check cache with very short TTL for real-time data
+        if self.cache is not None:
+            cache_key = f"{self.config.name}:quote:{symbol}"
+            cached_quote = await self.cache.get(cache_key)
+            if cached_quote is not None:
+                return cached_quote
+        
+        # Acquire rate limit token
+        await self.rate_limiter.acquire()
+        
+        # Fetch quote with circuit breaker protection
+        try:
+            quote = await self.circuit_breaker.call(
+                self._fetch_real_time_quote,
+                symbol
+            )
+        except Exception as e:
+            raise DataNotFoundError(f"Failed to fetch quote for {symbol}: {str(e)}")
+            
+        if quote is None:
+            raise DataNotFoundError(f"No quote available for {symbol}")
+            
+        # Cache quote with short TTL
+        if self.cache is not None:
+            await self.cache.set(
+                f"{self.config.name}:quote:{symbol}",
+                quote,
+                ttl=10  # Cache quotes for 10 seconds
+            )
+            
+        return quote
+
+    async def get_real_time_quotes_batch(
+        self,
+        symbols: List[str]
+    ) -> Dict[str, RealTimeQuote]:
+        """
+        Fetch real-time quotes for multiple symbols.
+        
+        Args:
+            symbols: List of symbols to fetch quotes for
+            
+        Returns:
+            Dictionary mapping symbols to their real-time quotes
+        """
+        results = {}
+        async with asyncio.TaskGroup() as group:
+            for symbol in symbols:
+                group.create_task(
+                    self._fetch_single_quote(symbol, results)
+                )
+        return results
+
+    async def _fetch_single_quote(
+        self,
+        symbol: str,
+        results: Dict[str, RealTimeQuote]
+    ) -> None:
+        """Helper method for batch quote fetching."""
+        try:
+            quote = await self.get_real_time_quote(symbol)
+            results[symbol] = quote
+        except Exception:
+            pass  # Failed quotes are omitted from results
+
+    def __del__(self):
+        """Cleanup resources on deletion."""
+        if hasattr(self, '_thread_pool'):
+            self._thread_pool.shutdown(wait=False)

@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+from enum import Enum, auto
 
 @dataclass
 class MarketData:
@@ -26,6 +27,29 @@ class TickerInfo:
     market_cap: Optional[float] = None
     sector: Optional[str] = None
     industry: Optional[str] = None
+
+class MarketSource(Enum):
+    """Supported market sources."""
+    NYSE = auto()
+    NASDAQ = auto()
+
+@dataclass
+class RealTimeQuote:
+    """Real-time market quote data."""
+    symbol: str
+    price: float
+    change: float
+    change_percent: float
+    volume: int
+    timestamp: datetime
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    bid_size: Optional[int] = None
+    ask_size: Optional[int] = None
+    market_source: Optional[MarketSource] = None
+    last_trade_time: Optional[datetime] = None
+    market_status: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
 
 @dataclass
 class HistoricalData:
@@ -73,3 +97,11 @@ class ProviderConfig:
     max_retries: int = 3
     cache: CacheConfig = field(default_factory=CacheConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+
+@dataclass
+class MarketSourceConfig:
+    """Configuration for market sources."""
+    name: MarketSource
+    symbols_file: str  # Path to JSON file containing symbols
+    enabled: bool = True
+    meta: Optional[Dict[str, Any]] = None

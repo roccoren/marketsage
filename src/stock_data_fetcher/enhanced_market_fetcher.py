@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class MarketRegistry:
     """Registry for managing different market exchanges."""
     
-    def __init__(self, config_dir: str = "data/config"):
+    def __init__(self, config_dir: str = "/datadrive/workspaces/stockscan-market-fetch/config/market"):
         self.config_dir = Path(config_dir)
         self.markets: Dict[str, Set[str]] = {}
         self._load_markets()
@@ -71,7 +71,7 @@ class MarketRegistry:
 class EnhancedMarketDataFetcher:
     """Enhanced market data fetcher with support for multiple exchanges and backfilling."""
     
-    def __init__(self, data_dir: str = "data", config_dir: str = "data/config"):
+    def __init__(self, data_dir: str = "data", config_dir: str = "/datadrive/workspaces/stockscan-market-fetch/config/market"):
         self.data_dir = Path(data_dir)
         self.registry = MarketRegistry(config_dir)
         self.provider = self._setup_provider()
@@ -81,9 +81,9 @@ class EnhancedMarketDataFetcher:
         config = ProviderConfig(
             name="yahoo",
             rate_limit=RateLimitConfig(
-                requests_per_second=2.0,
-                burst_size=5,
-                retry_after=60
+                requests_per_second=0.2,  # 1 request per 5 seconds
+                burst_size=1,            # No bursting
+                retry_after=300          # 5 minutes retry period
             ),
             cache=CacheConfig(
                 enabled=True,
@@ -129,8 +129,19 @@ class EnhancedMarketDataFetcher:
             
     async def backfill_data(self, market: str, symbol: str, start_date: datetime, end_date: Optional[datetime] = None):
         """Backfill missing data for a symbol between specified dates."""
+        # First validate in registry
         if not self.registry.validate_symbol(market, symbol):
             raise ValueError(f"Invalid symbol {symbol} for market {market}")
+            
+        # Then validate with Yahoo Finance
+        try:
+            is_valid = await self.provider._validate_symbol_exists(symbol)
+            if not is_valid:
+                logger.warning(f"Symbol {symbol} is not available in Yahoo Finance")
+                return
+        except Exception as e:
+            logger.error(f"Error validating symbol {symbol}: {str(e)}")
+            return
             
         end_date = end_date or datetime.now()
         existing_dates = await self._get_existing_dates(market, symbol)
@@ -177,11 +188,11 @@ class EnhancedMarketDataFetcher:
                         )
                     logger.info(f"Saved chunk {i//chunk_size + 1} for {symbol}")
                 
-                await asyncio.sleep(1)  # Rate limiting
-                
+                await asyncio.sleep(5)  # Rate limiting between chunks
+
             except (RateLimitError, CircuitBreakerError) as e:
                 logger.error(f"Rate limit error for {symbol}: {str(e)}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(300)  # 5 minute cooldown on rate limit
                 continue
             except Exception as e:
                 logger.error(f"Error fetching data for {symbol}: {str(e)}")
@@ -202,7 +213,7 @@ class EnhancedMarketDataFetcher:
                 logger.error(f"Error processing {symbol}: {str(e)}")
                 continue
             
-            await asyncio.sleep(1)  # Rate limiting between symbols
+            await asyncio.sleep(5)  # Rate limiting between symbols
 
 async def main():
     fetcher = EnhancedMarketDataFetcher()

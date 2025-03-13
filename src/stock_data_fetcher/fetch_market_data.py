@@ -25,8 +25,10 @@ from enhanced_market_fetcher import EnhancedMarketDataFetcher
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True,
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
@@ -105,8 +107,8 @@ Examples:
     parser.add_argument(
         "--config-dir",
         type=str,
-        default="data/config",
-        help="Directory containing market listings (default: data/config)"
+        default="/datadrive/workspaces/stockscan-market-fetch/config/market",
+        help="Directory containing market listings (default: /datadrive/workspaces/stockscan-market-fetch/config/market)"
     )
     
     parser.add_argument(
