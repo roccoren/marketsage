@@ -1,3 +1,4 @@
-"""Rate limiting components initialization."""
-from .token_bucket import TokenBucket  # noqa
-from .circuit_breaker import CircuitBreaker  # noqa
+"""Rate limiting package for market data fetching."""
+from .rate_limiter import TokenBucket, CircuitBreaker
+
+__all__ = ['TokenBucket', 'CircuitBreaker']

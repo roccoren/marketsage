@@ -72,7 +72,7 @@ class MarketRegistry:
         self._load_markets()
     
     def _load_markets(self) -> None:
-        """Load market listings from config files."""
+        """Load market listings from config files in both legacy and new formats."""
         if not self.config_dir.exists():
             logger.warning(f"Config directory not found: {self.config_dir}")
             return
@@ -82,14 +82,24 @@ class MarketRegistry:
             try:
                 with open(file_path, 'r') as f:
                     data = json.load(f)
-                    symbols = {
-                        item.get('Symbol', item.get('symbol'))
-                        for item in data
-                        if 'Symbol' in item or 'symbol' in item
-                    }
+                    symbols = set()
+                    
+                    # Handle new standardized format
+                    if isinstance(data, dict) and "symbols" in data:
+                        symbols = set(data["symbols"])
+                    # Handle legacy format (array of objects with Symbol/symbol)
+                    elif isinstance(data, list):
+                        symbols = {
+                            item.get('Symbol', item.get('symbol'))
+                            for item in data
+                            if 'Symbol' in item or 'symbol' in item
+                        }
+                        
                     if symbols:
                         self.markets[market_name] = symbols
                         logger.info(f"Loaded {len(symbols)} symbols for {market_name}")
+                    else:
+                        logger.warning(f"No symbols found in {file_path}")
             except Exception as e:
                 logger.error(f"Error loading market {market_name}: {str(e)}")
     

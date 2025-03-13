@@ -4,47 +4,73 @@ A robust and efficient package for fetching and managing market data from variou
 
 ## Features
 
-- **Efficient Data Fetching**
-  - Asynchronous operations
-  - Connection pooling
-  - Request batching
-  - Automatic retries
+- **High-Level Market Data Fetching**
+  - Consolidated market fetcher with registry support
+  - Batch processing and backfilling capabilities
+  - Market symbol validation and management
+  - Efficient data storage and retrieval
 
-- **Rate Limiting**
+- **Rate Limiting & Protection**
   - Token bucket algorithm
+  - Circuit breaker pattern
   - Configurable rates and burst sizes
   - Automatic request queuing
 
-- **Circuit Breaking**
-  - Fault tolerance
-  - Automatic service recovery
-  - Failure tracking
-  - Configurable thresholds
-
-- **Caching**
-  - Disk-based caching
-  - Configurable TTL
+- **Smart Caching**
+  - Disk-based caching with TTL
   - Automatic compression
   - Thread-safe operations
+  - Configurable storage options
 
 - **Error Handling**
   - Custom exception hierarchy
   - Detailed error messages
-  - Request validation
-  - Response validation
-
-## Installation
-
-```bash
-# Install from your project root
-pip install -e src/market_data
-```
+  - Request/response validation
+  - Automatic retries
 
 ## Quick Start
 
+### Using the Consolidated Market Fetcher
+
 ```python
-"""Example demonstrating usage of the market data package with Yahoo Finance."""
-import os
+from datetime import datetime
+import asyncio
+from market_data.core.market_fetcher import ConsolidatedMarketFetcher
+
+async def main():
+    # Initialize the fetcher
+    fetcher = ConsolidatedMarketFetcher(
+        data_dir="data",
+        config_dir="config/market",
+        cache_ttl_days=1,
+        max_concurrent=3,
+        batch_size=10,
+        rate_limit=0.5  # 2 requests per second max
+    )
+    
+    # Get available markets
+    markets = fetcher.get_available_markets()
+    print(f"Available markets: {markets}")
+    
+    # Fetch data for a specific symbol
+    market = "nasdaq"
+    symbol = "AAPL"
+    date = datetime.now()
+    
+    data = await fetcher.get_market_data(market, symbol, date)
+    if data:
+        print(f"Latest data for {symbol}:")
+        print(f"Open: ${data['open']:.2f}")
+        print(f"Close: ${data['close']:.2f}")
+        print(f"Volume: {data['volume']:,}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Using Low-Level Provider API
+
+```python
 from datetime import datetime, timedelta
 import asyncio
 from market_data.providers.yahoo import YahooFinanceProvider
@@ -53,82 +79,53 @@ from market_data.models.common import (
     CacheConfig,
     RateLimitConfig
 )
-from market_data.exceptions import (
-    DataNotFoundError,
-    ConnectionError,
-    ValidationError
-)
 
 async def main():
-    # Ensure cache directory exists
-    cache_dir = "./data/cache"
-    os.makedirs(cache_dir, exist_ok=True)
-
-    # Initialize provider configuration
     config = ProviderConfig(
         name="yahoo",
         cache=CacheConfig(
             enabled=True,
-            directory=cache_dir,
+            directory="./cache",
             ttl=24 * 3600  # 1 day cache
         ),
         rate_limit=RateLimitConfig(
-            requests_per_second=0.2,  # Conservative rate limiting
+            requests_per_second=0.2,
             burst_size=1,
-            retry_after=5  # Wait 5 seconds after hitting rate limit
+            retry_after=5
         )
     )
     
-    # Initialize the provider
     provider = YahooFinanceProvider(config)
-
-    # Define time range for historical data
+    symbol = "AAPL"
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=7)  # Last week of data
+    start_date = end_date - timedelta(days=7)
     
-    try:
-        # First try to get ticker info
-        symbol = "AAPL"
-        info = await provider.get_ticker_info(symbol)
-        print(f"Found ticker: {info.name} ({info.exchange})")
-
-        # Then fetch historical data
-        result = await provider.get_history(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date
-        )
-        
-        if result and result.data:
-            print(f"\nData summary for {symbol}:")
-            print(f"Period: {result.start_date.strftime('%Y-%m-%d')} to {result.end_date.strftime('%Y-%m-%d')}")
-            print(f"Number of data points: {len(result.data)}")
-            
-            # Show latest trading day
-            latest = result.data[-1]
-            print(f"\nLatest trading day ({latest.date.strftime('%Y-%m-%d')}):")
-            print(f"Open:     ${latest.open:.2f}")
-            print(f"Close:    ${latest.close:.2f}")
-            print(f"Volume:   {latest.volume:,}")
-            
-    except ValidationError as e:
-        print(f"Invalid symbol: {str(e)}")
-    except DataNotFoundError as e:
-        print(f"No data found: {str(e)}")
-    except ConnectionError as e:
-        print(f"Connection error: {str(e)}")
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-    finally:
-        # Cleanup resources
-        if hasattr(provider, '__del__'):
-            provider.__del__()
+    result = await provider.get_history(symbol, start_date, end_date)
+    if result and result.data:
+        latest = result.data[-1]
+        print(f"Latest data for {symbol}:")
+        print(f"Open: ${latest.open:.2f}")
+        print(f"Close: ${latest.close:.2f}")
+        print(f"Volume: {latest.volume:,}")
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
 ## Configuration
+
+### Consolidated Market Fetcher Configuration
+
+```python
+ConsolidatedMarketFetcher(
+    data_dir="data",              # Base directory for data storage
+    config_dir="config/market",   # Directory containing market listings
+    cache_ttl_days=1,            # Cache time-to-live in days
+    max_concurrent=3,            # Maximum concurrent requests
+    batch_size=10,              # Symbols to process in each batch
+    rate_limit=0.5              # Requests per second limit
+)
+```
 
 ### Provider Configuration
 
@@ -183,11 +180,7 @@ from market_data.exceptions import (
 )
 
 try:
-    # First validate the symbol
-    info = await provider.get_ticker_info(symbol)
-    
-    # Then get historical data
-    data = await provider.get_history(symbol, start_date, end_date)
+    data = await fetcher.get_market_data(market, symbol, date)
 except RateLimitError:
     print("Rate limit exceeded")
 except CircuitBreakerError:
