@@ -49,6 +49,7 @@ logs/
 *.csv
 *.json
 *.db
+reports/
 
 # Python Caches
 __pycache__/

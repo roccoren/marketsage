@@ -1,0 +1,35 @@
+{
+  "open": 57.09,          // Reduce precision to 2 decimal places for price data
+  "high": 57.63,          // Financial data typically doesn't need more precision
+  "low": 56.94,
+  "close": 57.09,
+  "volume": 2294978,      // Use integer for volume (no decimal needed)
+  "adjusted_close": 57.09,
+  "date": "2020-01-02",   // Keep ISO date format
+  "market": "hkex",
+  "symbol": "0001.HK",
+  "currency": "HKD",      // Add currency information
+  "trading_status": "active", // Add trading status (e.g., active, halted, suspended)
+  "metrics": {            // Group derived/calculated metrics
+    "returns": {
+      "daily": -0.15,     // Daily return percentage
+      "intraday_range": 1.21  // High-Low range percentage
+    },
+    "indicators": {       // Technical indicators
+      "vwap": 57.15,     // Volume Weighted Average Price
+      "turnover": 130920891.02  // Daily turnover (volume * price)
+    }
+  },
+  "session": {           // Trading session information
+    "regular": {         // Regular trading hours data
+      "start": "2020-01-02T09:30:00+08:00",
+      "end": "2020-01-02T16:00:00+08:00"
+    }
+  },
+  "metadata": {         // Additional market-specific information
+    "lot_size": 100,
+    "board_lot": 100,
+    "sector": "Finance",
+    "industry": "Banks"
+  }
+}
