@@ -1,214 +1,335 @@
-# Market Analysis System
+# StockScan Backtesting System
 
-A high-performance market data analysis system designed for processing and analyzing large-scale financial market data. The system implements advanced trading strategies, data optimization techniques, and comprehensive reporting capabilities.
+A comprehensive backtesting framework for testing trading strategies across multiple markets.
 
-## Core Components
+## Table of Contents
 
-### 1. Market Data Processing
-- `OptimizedMarketProcessor`: Handles efficient market data processing with memory optimization and parallel execution capabilities
-- Built-in data validation and quality checks
-- Support for chunked processing of large datasets
-- Performance monitoring and benchmarking
+- [Overview](#overview)
+- [Installation](#installation)
+- [Data Management](#data-management)
+  - [Fetching Data Periodically](#fetching-data-periodically)
+  - [Data Structure](#data-structure)
+- [Running Backtests](#running-backtests)
+  - [Single Symbol Backtest](#single-symbol-backtest)
+  - [Market-wide Backtests](#market-wide-backtests)
+  - [Supported Markets](#supported-markets)
+- [Strategies](#strategies)
+  - [Built-in Strategies](#built-in-strategies)
+  - [Adding Custom Strategies](#adding-custom-strategies)
+  - [Strategy Filtering](#strategy-filtering)
+- [Performance Analysis](#performance-analysis)
+- [Configuration](#configuration)
+- [Examples](#examples)
 
-### 2. Strategy Analysis
-- Multiple trading strategies including:
-  - Moving Average Crossover
-  - Volatility Breakout
-  - Volume Spike Analysis
-- Advanced technical indicators with VWAP integration
-- Risk metrics calculation
-- Performance analytics and backtesting
+## Overview
 
-### 3. Report Generation
-- Comprehensive strategy analysis reports
-- Real-time performance metrics
-- Market sentiment analysis
-- Technical signal tracking
-- Action recommendations with confidence levels
-
-## Features
-
-### Performance Optimization
-- Parallel processing support
-- Memory-efficient chunked data handling
-- Optimized data structures using pandas categorical types
-- Automatic resource management and monitoring
-
-### Data Quality
-- Robust validation for market data integrity
-- Handling of missing or incomplete data
-- Flexible date range filtering
-- Comprehensive error logging and reporting
-
-### Technical Analysis
-- VWAP-based indicators
-- Volume profile analysis
-- Price trend detection
-- Market sentiment scoring
-- Multi-timeframe analysis support
+StockScan is a powerful backtesting system designed to evaluate trading strategies across multiple markets. It supports various timeframes, parallel execution, and comprehensive performance reporting.
 
 ## Installation
 
-1. Clone the repository:
 ```bash
-git clone [repository-url]
+# Clone the repository
+git clone https://github.com/yourusername/stockscan.git
 cd stockscan
-```
 
-2. Install dependencies:
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Usage
+## Data Management
 
-### Command Line Interface
+### Fetching Data Periodically
 
-Generate a strategy analysis report:
+The system supports periodic data fetching to keep your market data up-to-date. You can set up automated data fetching using the following approaches:
+
+#### 1. Using the Data Fetcher Script
+
 ```bash
-python -m src.market_system.generate_strategy_report [data_path] [market_name] [options]
+# Fetch data for specific symbols
+python data_fetcher.py --market hkex --symbols 0700.HK 9988.HK --start-date 2023-01-01
 
-Options:
-  --output-dir DIR     Directory to save reports (default: reports)
-  --start-date DATE    Start date for analysis (YYYY-MM-DD format)
-  --chunk-size SIZE    Size of data chunks for processing (default: 100000)
+# Fetch data for an entire market
+python data_fetcher.py --market nasdaq --all-symbols --start-date 2023-01-01
 ```
 
-### Python API
+#### 2. Setting Up Scheduled Data Updates
+
+You can set up a cron job (Linux/Mac) or Task Scheduler (Windows) to run the data fetcher periodically:
+
+**Linux/Mac (crontab):**
+```
+# Run daily at 6 PM
+0 18 * * * cd /path/to/stockscan && python data_fetcher.py --market hkex --all-symbols --days 1
+```
+
+**Windows (Task Scheduler):**
+Create a batch file `update_data.bat`:
+```batch
+cd C:\path\to\stockscan
+python data_fetcher.py --market hkex --all-symbols --days 1
+```
+
+Then schedule this batch file to run daily using Task Scheduler.
+
+#### 3. Programmatic Data Updates
+
+You can also update data programmatically:
 
 ```python
-from market_system.strategy_analyzer import StrategyAnalyzer
-from market_system.optimized_market_processor import OptimizedMarketProcessor
+from src.market_system.data.data_fetcher import DataFetcher
 
-# Initialize analyzer
-analyzer = StrategyAnalyzer('/path/to/data')
+# Initialize data fetcher
+fetcher = DataFetcher(base_path="data")
 
-# Generate report
-report = analyzer.generate_report(
-    market_name='ASX',
-    chunk_size=100000,
-    start_date='2025-01-01'
+# Update data for specific market and symbols
+fetcher.update_data(
+    market="hkex",
+    symbols=["0700.HK", "9988.HK"],
+    start_date="2023-01-01",
+    end_date="2023-12-31",
+    timeframe="1d"
 )
 ```
 
-## Data Format
+### Data Structure
 
-The system expects market data in JSON format with the following structure:
+The system stores market data in a structured format:
+
+```
+data/
+├── hkex/
+│   ├── 0700.HK/
+│   │   ├── 2023-01-01.json
+│   │   ├── 2023-01-02.json
+│   │   └── ...
+│   ├── 9988.HK/
+│   │   └── ...
+├── nasdaq/
+│   └── ...
+├── nyse/
+│   └── ...
+└── asx/
+    └── ...
+```
+
+Each JSON file contains OHLCV data and additional market information for a specific date.
+
+## Running Backtests
+
+### Single Symbol Backtest
+
+To run a backtest for a single symbol:
+
+```bash
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following mean_reversion --generate-reports
+```
+
+### Market-wide Backtests
+
+To run a backtest across an entire market:
+
+```bash
+# Run backtest for all HKEX symbols
+python market_backtest.py --all-symbols --market hkex --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following --execution-mode parallel --workers 4 --generate-reports
+
+# Run backtest for specific symbols
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following mean_reversion --execution-mode parallel --workers 2 --generate-reports
+
+# Run backtest with symbols from a file
+python market_backtest.py --symbol-file symbols.txt --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following
+```
+
+#### Execution Modes
+
+The system supports two execution modes:
+
+1. **Parallel**: Uses multiple processes to run backtests in parallel
+   ```bash
+   python market_backtest.py --symbols 0700.HK 9988.HK --execution-mode parallel --workers 2
+   ```
+
+2. **Async**: Uses asynchronous execution for improved performance with many symbols
+   ```bash
+   python market_backtest.py --all-symbols --market nasdaq --execution-mode async --max-concurrent 20
+   ```
+
+### Supported Markets
+
+The system currently supports the following markets:
+
+- HKEX (Hong Kong Exchange)
+- NASDAQ
+- NYSE (New York Stock Exchange)
+- ASX (Australian Securities Exchange)
+
+To specify a market:
+
+```bash
+python market_backtest.py --all-symbols --market nasdaq --start-date 2023-01-01 --end-date 2023-12-31
+```
+
+## Strategies
+
+### Built-in Strategies
+
+The system comes with several built-in strategies:
+
+1. **Trend Following**: Based on moving average crossovers
+   ```bash
+   python market_backtest.py --symbols 0700.HK --strategies trend_following --fast-period 20 --slow-period 50
+   ```
+
+2. **Mean Reversion**: Based on RSI (Relative Strength Index)
+   ```bash
+   python market_backtest.py --symbols 0700.HK --strategies mean_reversion --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70
+   ```
+
+### Adding Custom Strategies
+
+To add a custom strategy:
+
+1. Create a new strategy file in `src/market_system/backtesting/strategies/`
+2. Implement your strategy by extending the `BaseStrategy` class
+3. Register your strategy in `src/market_system/backtesting/strategies/__init__.py`
+
+Example of a custom strategy:
+
+```python
+# src/market_system/backtesting/strategies/my_strategy.py
+from src.market_system.strategy.base_strategy import BaseStrategy
+from src.market_system.domain.models import MarketData, Signal, MarketState
+from typing import List, Optional
+
+class MyStrategy(BaseStrategy):
+    def __init__(self, name="MyStrategy", param1=10, param2=20):
+        super().__init__(name)
+        self.param1 = param1
+        self.param2 = param2
+        self._required_indicators = ['indicator1', 'indicator2']
+    
+    def analyze(self, data: List[MarketData], market_state: MarketState) -> Optional[Signal]:
+        # Implement your strategy logic here
+        # Return a Signal object if a trading opportunity is identified
+        # Return None otherwise
+        pass
+    
+    def get_stop_loss(self, data: List[MarketData], signal: Signal) -> float:
+        # Implement stop loss calculation
+        pass
+    
+    def get_take_profit(self, data: List[MarketData], signal: Signal) -> float:
+        # Implement take profit calculation
+        pass
+```
+
+Then register your strategy in `__init__.py`:
+
+```python
+# src/market_system/backtesting/strategies/__init__.py
+from src.market_system.backtesting.strategies.trend_following import TrendFollowingStrategy
+from src.market_system.backtesting.strategies.mean_reversion import MeanReversionStrategy
+from src.market_system.backtesting.strategies.my_strategy import MyStrategy
+
+__all__ = [
+    'TrendFollowingStrategy',
+    'MeanReversionStrategy',
+    'MyStrategy'
+]
+```
+
+### Strategy Filtering
+
+The system includes a strategy analyzer that can filter symbols based on predefined criteria before running a full backtest. This can significantly improve performance by focusing only on promising candidates.
+
+#### Is Manual Strategy Filtering Necessary?
+
+No, manual strategy filtering is not necessary before running a backtest. The backtesting engine automatically applies appropriate filters based on the strategies being used. However, you can run a separate strategy filtering step if you want to:
+
+1. Pre-screen a large universe of symbols to identify the most promising candidates
+2. Apply more complex filtering criteria than what's built into the strategies
+3. Generate a list of filtered symbols for further analysis
+
+#### Running Strategy Filtering
+
+```bash
+# Filter symbols based on strategy criteria
+python strategy_filter.py --market hkex --start-date 2023-01-01 --end-date 2023-12-31 --min-volume 1000000 --output filtered_symbols.txt
+
+# Then run backtest with filtered symbols
+python market_backtest.py --symbol-file filtered_symbols.txt --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following
+```
+
+## Performance Analysis
+
+After running a backtest, the system generates comprehensive performance reports:
+
+```bash
+# Generate reports for a previous backtest
+python report_generator.py --input-file results/backtest_results_20230101_20231231.json --formats html,json,csv
+```
+
+Reports are saved in the `reports/backtest/` directory and include:
+
+- Equity curve charts
+- Trade statistics
+- Performance metrics (Sharpe ratio, max drawdown, etc.)
+- Trade distribution analysis
+
+## Configuration
+
+You can customize the backtest configuration using command-line arguments or a configuration file:
+
+```bash
+# Using command-line arguments
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-12-31 --initial-capital 100000 --position-size 0.1 --stop-loss 0.05 --take-profit 0.1
+
+# Using a configuration file
+python market_backtest.py --config config.json
+```
+
+Example `config.json`:
 ```json
 {
-    "date": "2025-03-15",
-    "symbol": "BHP.AX",
-    "market": "ASX",
-    "close": 44.55,
-    "volume": 1234567,
-    "trading_status": "active",
-    "currency": "AUD",
-    "metrics": {
-        "indicators": {
-            "vwap": 44.32,
-            "turnover": 54876543
-        },
-        "returns": {
-            "daily": 0.015,
-            "intraday_range": 0.025
-        }
-    }
+  "symbols": ["0700.HK", "9988.HK"],
+  "start_date": "2023-01-01",
+  "end_date": "2023-12-31",
+  "strategies": ["trend_following", "mean_reversion"],
+  "initial_capital": 100000,
+  "position_size": 0.1,
+  "stop_loss": 0.05,
+  "take_profit": 0.1,
+  "execution_mode": "parallel",
+  "workers": 4,
+  "generate_reports": true
 }
 ```
 
-## Performance Considerations
+## Examples
 
-- Memory Usage: The system implements chunked processing to handle large datasets efficiently
-- CPU Utilization: Parallel processing is automatically managed based on available cores
-- I/O Optimization: Efficient file reading with streaming support for large files
-- Data Validation: Robust error handling and data quality checks without compromising performance
+### Example 1: Running a Simple Backtest
 
-## Project Structure
-
-```
-stockscan/
-├── src/
-│   └── market_system/
-│       ├── strategy_analyzer.py      # Strategy analysis implementation
-│       ├── optimized_market_processor.py  # Data processing engine
-│       └── generate_strategy_report.py    # Report generation
-├── data/           # Market data directory
-│   └── asx/        # Market-specific data
-├── reports/        # Generated analysis reports
-└── README.md
-```
-
-## Testing
-
-### Running Tests
-The project uses pytest for unit testing and pytest-cov for coverage reporting.
-
-1. Install test dependencies:
 ```bash
-pip install -r requirements.txt
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --strategies trend_following
 ```
 
-2. Run tests with coverage:
+### Example 2: Market-wide Backtest with Multiple Strategies
+
 ```bash
-python -m pytest tests/ --cov=src --cov-report=term-missing
+python market_backtest.py --all-symbols --market hkex --start-date 2023-01-01 --end-date 2023-01-31 --strategies trend_following mean_reversion --execution-mode parallel --workers 4 --generate-reports
 ```
 
-3. Run specific test file:
+### Example 3: Customizing Strategy Parameters
+
 ```bash
-python -m pytest tests/test_strategy_analyzer.py
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-01-31 --strategies trend_following --fast-period 10 --slow-period 30 --position-size 0.2 --stop-loss 0.03 --take-profit 0.09
 ```
 
-### Test Organization
+### Example 4: Running Backtests with Different Timeframes
+
+```bash
+# Daily timeframe
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --timeframe 1d --strategies trend_following
+
+# Hourly timeframe
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --timeframe 1h --strategies mean_reversion
 ```
-tests/
-├── __init__.py              # Test configuration and utilities
-├── test_strategy_analyzer.py       # Strategy analysis tests
-├── test_optimized_market_processor.py  # Data processing tests
-└── test_generate_strategy_report.py    # Report generation tests
-```
-
-### Coverage Requirements
-- Minimum coverage: 80% for all modules
-- Critical components require 90% coverage:
-  - Strategy analysis logic
-  - Data processing pipeline
-  - Report generation
-- All error handling paths must be tested
-- Edge cases must be covered
-
-## Development
-
-### Code Quality
-- Follow PEP 8 style guidelines (use flake8)
-- Run formatter: `black src/ tests/`
-- Run type checking: `mypy src/`
-- Implement comprehensive error handling
-- Maintain test coverage above required thresholds
-- Use type hints for better code maintainability
-
-### Memory Management
-- Monitor memory usage with `PerformanceMetrics`
-- Implement chunked processing for large datasets
-- Use efficient data structures (categorical types, etc.)
-- Clean up temporary data properly
-
-## Error Handling
-
-The system implements comprehensive error handling:
-- Data validation errors
-- Memory allocation issues
-- File I/O errors
-- Processing errors
-
-Each error is logged with detailed context for debugging.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Implement changes with tests
-4. Submit a pull request
-
-## License
-
-[Specify License]

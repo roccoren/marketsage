@@ -1,0 +1,3 @@
+"""
+StockScan source package.
+""" 
