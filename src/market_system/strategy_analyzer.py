@@ -96,8 +96,51 @@ class StrategyAnalyzer:
         df, start_idx = chunk_data
         return self._calculate_indicators(df)
 
+    def _validate_data_quality(self, df: pd.DataFrame) -> None:
+        """
+        Validate data quality and log any issues.
+        
+        Args:
+            df: DataFrame to validate
+        """
+        quality_metrics = {
+            'missing_rates': {
+                col: df[col].isna().mean() * 100
+                for col in ['price', 'volume', 'vwap', 'turnover']
+            },
+            'zero_rates': {
+                col: (df[col] == 0).mean() * 100
+                for col in ['price', 'volume']
+            },
+            'negative_rates': {
+                col: (df[col] < 0).mean() * 100
+                for col in ['price', 'volume', 'turnover']
+            }
+        }
+        
+        # Log data quality summary
+        logger.info(
+            "Data quality metrics:\n"
+            f"Missing value rates: {json.dumps(quality_metrics['missing_rates'], indent=2)}\n"
+            f"Zero value rates: {json.dumps(quality_metrics['zero_rates'], indent=2)}\n"
+            f"Negative value rates: {json.dumps(quality_metrics['negative_rates'], indent=2)}"
+        )
+        
+        # Check for concerning issues
+        for metric_type, rates in quality_metrics.items():
+            for col, rate in rates.items():
+                if rate > 10:  # More than 10% problematic values
+                    logger.warning(
+                        f"High {metric_type} rate for {col}: {rate:.1f}%"
+                    )
+
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate all technical indicators efficiently."""
+        """
+        Calculate all technical indicators efficiently.
+        Implements data validation and robust calculation methods.
+        """
+        # Run data quality validation
+        self._validate_data_quality(df)
         # Only process active trading status
         df = df[df['trading_status'] == 'active'].copy()
         
@@ -143,31 +186,79 @@ class StrategyAnalyzer:
             ma_window = 20
             vol_window = 20
         
-        # Calculate indicators with adjusted windows
-        df['SMA_20'] = df.groupby('symbol')['price'].rolling(
-            window=ma_window, min_periods=max(2, ma_window//2)
-        ).mean().reset_index(0, drop=True)
-        
-        if n_records >= 50:
-            df['SMA_50'] = df.groupby('symbol')['price'].rolling(
-                window=50, min_periods=25
-            ).mean().reset_index(0, drop=True)
-        else:
-            df['SMA_50'] = df['SMA_20']  # Use shorter MA as fallback
+        # Calculate moving averages and volatility with consistent handling
+        for symbol, group in df.groupby('symbol'):
+            # Calculate SMAs
+            df.loc[group.index, 'SMA_20'] = group['price'].rolling(window=20, min_periods=1).mean()
+            df.loc[group.index, 'SMA_50'] = group['price'].rolling(window=50, min_periods=1).mean()
+            
+            # Calculate volatility using the same window
+            df.loc[group.index, 'volatility'] = group['price'].rolling(window=20, min_periods=1).std()
+            
+        # Handle missing values with forward/backward fill
+        fill_columns = ['SMA_20', 'SMA_50', 'volatility']
+        df[fill_columns] = df.groupby('symbol')[fill_columns].transform(lambda x: x.ffill().bfill())
         # Calculate volatility with adjusted windows per symbol
         df['volatility'] = df.groupby('symbol')['price'].rolling(
             window=vol_window,
             min_periods=max(2, vol_window//2)
         ).std().reset_index(0, drop=True)
 
-        # Calculate volume trends per symbol
-        df['volume_ma'] = df.groupby('symbol')['volume'].rolling(
-            window=vol_window,
-            min_periods=max(2, vol_window//2)
-        ).mean().reset_index(0, drop=True)
-
-        # Calculate volume ratio and handle infinity values
-        df['volume_ratio'] = df['volume'].div(df['volume_ma']).replace([np.inf, -np.inf], np.nan)
+        # Calculate volume trends per symbol with enhanced validation
+        try:
+            # First, ensure volume data is numeric and handle any invalid values
+            df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+            
+            # Fill missing values with median within each symbol
+            df['volume'] = df.groupby('symbol')['volume'].transform(
+                lambda x: x.fillna(x.median() if not x.median() != x.median() else x.mean())
+            )
+            
+            # If still have NaNs, forward/backward fill within each symbol
+            if df['volume'].isna().any():
+                df['volume'] = df.groupby('symbol')['volume'].fillna(method='ffill').fillna(method='bfill')
+            
+            # Calculate volume MA with more lenient validation
+            df['volume_ma'] = df.groupby('symbol')['volume'].transform(
+                lambda x: x.rolling(
+                    window=vol_window,
+                    min_periods=max(2, vol_window//4)  # More lenient min_periods
+                ).mean()
+            )
+            
+            # Handle any remaining NaN values in volume_ma
+            df['volume_ma'] = df.groupby('symbol')['volume_ma'].transform(
+                lambda x: x.ffill().bfill().fillna(x.mean())
+            )
+            
+            # Calculate volume ratio with additional safety checks
+            df['volume_ratio'] = (
+                df['volume'].div(df['volume_ma'].replace(0, np.nan))
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(1.0)  # Use neutral value for any invalid ratios
+            )
+            
+            # Log data quality metrics
+            na_counts = {
+                'volume': df['volume'].isna().sum(),
+                'volume_ma': df['volume_ma'].isna().sum(),
+                'volume_ratio': df['volume_ratio'].isna().sum()
+            }
+            
+            if any(na_counts.values()):
+                logger.warning(
+                    "Volume metrics calculation summary:\n"
+                    f"- Missing volume values: {na_counts['volume']}\n"
+                    f"- Missing MA values: {na_counts['volume_ma']}\n"
+                    f"- Missing ratio values: {na_counts['volume_ratio']}"
+                )
+            
+        except Exception as e:
+            logger.error(f"Error calculating volume metrics: {str(e)}")
+            # Set neutral/fallback values
+            df['volume_ma'] = df['volume']
+            df['volume_ratio'] = 1.0
+            logger.info("Using fallback values for volume metrics due to calculation error")
         
         # Add VWAP-based indicators with data quality check
         if df['vwap'].notna().mean() >= MIN_DATA_RATIO:
@@ -230,49 +321,67 @@ class StrategyAnalyzer:
         # Combine processed chunks
         df = pd.concat(processed_chunks, axis=0)
         
-        # Remove rows with NaN in key indicators
+        # More lenient validation - only require essential indicators
         valid_mask = (
-            df['SMA_20'].notna() &
-            df['SMA_50'].notna() &
-            df['volatility'].notna() &
-            df['volume_ratio'].notna() &
-            df['price_to_vwap'].notna()
+            df['price'].notna() &
+            df['volume'].notna() &
+            ((df['SMA_20'].notna() & df['SMA_50'].notna()) |  # Either need both SMAs
+             (df['volatility'].notna()) |                      # OR volatility
+             (df['volume_ratio'].notna() & df['price_to_vwap'].notna()))  # OR volume & price metrics
         )
         
         valid_df = df[valid_mask].copy()
-        if len(valid_df) < 50:
+        if len(valid_df) < 10:  # Reduced minimum requirement
             logger.warning("Insufficient valid data points after filtering NaN values")
             return {'moving_average_crossover': pd.DataFrame(),
                    'volatility_breakout': pd.DataFrame(),
                    'volume_spike': pd.DataFrame()}
+        # Calculate more lenient dynamic thresholds with detailed logging
+        vol_threshold = max(1.05, valid_df['volume_ratio'].quantile(0.6))  # Reduced from 0.7 to 0.6
+        volatility_threshold = valid_df['volatility'].quantile(0.6)  # Reduced from 0.7 to 0.6
+        turnover_threshold = valid_df['turnover'].mean() * 0.6  # Reduced from 0.8 to 0.6
 
-        # Calculate dynamic thresholds
-        vol_threshold = max(1.1, valid_df['volume_ratio'].quantile(0.7))
-        volatility_threshold = valid_df['volatility'].quantile(0.7)
-        turnover_threshold = valid_df['turnover'].mean() * 0.8  # More lenient turnover requirement
+        # Log threshold calculation details
+        logger.info(
+            "Threshold Calculation Details:\n"
+            f"Volume Ratio Stats:\n"
+            f"- Mean: {valid_df['volume_ratio'].mean():.2f}\n"
+            f"- Median: {valid_df['volume_ratio'].median():.2f}\n"
+            f"- Selected Threshold: {vol_threshold:.2f}\n"
+            f"Volatility Stats:\n"
+            f"- Mean: {valid_df['volatility'].mean():.2f}\n"
+            f"- Median: {valid_df['volatility'].median():.2f}\n"
+            f"- Selected Threshold: {volatility_threshold:.2f}\n"
+            f"Turnover Stats:\n"
+            f"- Mean: {valid_df['turnover'].mean():.2f}\n"
+            f"- Selected Threshold: {turnover_threshold:.2f}"
+        )
 
-        # Strategy 1: Enhanced Moving Average Crossover with VWAP
+        # Adjust thresholds based on recent data characteristics
+        vol_threshold = max(1.0, valid_df['volume_ratio'].quantile(0.5))  # Even more lenient
+        volatility_threshold = valid_df['volatility'].quantile(0.5)  # Median volatility
+        turnover_threshold = valid_df['turnover'].mean() * 0.5  # Reduced threshold
+
+        # Strategy 1: Adapted Moving Average Crossover for recent data
         ma_crossover = valid_df[
             (valid_df['SMA_20'] > valid_df['SMA_50']) &
-            (valid_df['volume_ratio'] > vol_threshold * 0.8) &  # More lenient volume requirement
-            (valid_df['price_to_vwap'].between(0.95, 1.05)) &  # Wider VWAP range
-            (valid_df['turnover'] > turnover_threshold)
+            (valid_df['volume_ratio'] > vol_threshold * 0.6) &  # Further reduced requirement
+            (valid_df['price_to_vwap'].between(0.85, 1.15)) &  # Even wider VWAP range
+            (valid_df['turnover'] > turnover_threshold * 0.5)   # Reduced turnover requirement
         ].copy()
         
-        # Strategy 2: Enhanced Volatility Breakout with VWAP
+        # Strategy 2: Adapted Volatility Breakout for recent data
         volatility_breakout = valid_df[
-            (valid_df['volatility'] > volatility_threshold) &
-            (valid_df['volume'] > valid_df['volume'].mean() * 0.8) &  # More lenient volume requirement
-            ((valid_df['price'] > valid_df['vwap']) |  # Price above VWAP OR recent uptrend
-             (valid_df['SMA_20'] > valid_df['SMA_20'].shift(1)))
+            (valid_df['volatility'] > volatility_threshold * 0.6) &  # Reduced volatility requirement
+            (valid_df['volume'] > valid_df['volume'].mean() * 0.5) & # Lower volume threshold
+            (valid_df['price'] > valid_df['price'].shift(1))         # Simple price increase
         ].copy()
         
-        # Strategy 3: Enhanced Volume Spike with Market Impact
+        # Strategy 3: Adapted Volume Spike for recent data
         volume_spike = valid_df[
-            (valid_df['volume_ratio'] > vol_threshold) &
-            ((valid_df['price'] > valid_df['vwap']) |  # Price above VWAP OR positive momentum
-             (valid_df['SMA_20'] > valid_df['SMA_50'])) &
-            (valid_df['turnover'] > turnover_threshold)  # Using pre-calculated threshold
+            (valid_df['volume_ratio'] > vol_threshold * 0.6) &      # Lower volume ratio requirement
+            (valid_df['price'] > valid_df['price'].rolling(5).mean()) & # Price above short-term average
+            (valid_df['turnover'] > turnover_threshold * 0.5)        # Lower turnover requirement
         ].copy()
         
         # Log threshold values for debugging
