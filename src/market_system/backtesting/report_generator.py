@@ -85,260 +85,154 @@ class ReportGenerator:
         return report_paths
         
     def generate_html_report(self, 
-                             backtest_results: Dict,
-                             report_name: str) -> str:
+                         backtest_results: Dict,
+                         report_name: str) -> str:
         """
-        Generate an HTML performance report.
+        Generate an HTML report for the backtest results.
         
         Args:
-            backtest_results: Results from the backtest
-            report_name: Name for the report
+            backtest_results: Backtest results dictionary
+            report_name: Name for the report file
             
         Returns:
             Path to the generated HTML report
         """
-        report_dir = self.output_dir / report_name
-        html_path = report_dir / f"{report_name}.html"
+        # Create charts directory
+        chart_dir = self.output_dir / "charts" / report_name
+        chart_dir.mkdir(parents=True, exist_ok=True)
         
-        # Extract data from backtest results
-        strategy_name = backtest_results.get("strategy_name", "Unknown Strategy")
-        start_date = backtest_results.get("start_date", "Unknown")
-        end_date = backtest_results.get("end_date", "Unknown")
-        initial_capital = backtest_results.get("initial_capital", 0)
-        final_equity = backtest_results.get("final_equity", 0)
+        # Generate charts
+        self.generate_charts(backtest_results, chart_dir)
         
-        # Get performance metrics
-        metrics = backtest_results.get("metrics", {})
-        
-        # Create HTML content
+        # Start building HTML content
         html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Backtest Report: {strategy_name}</title>
+            <title>Backtest Report: {report_name}</title>
             <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 20px;
-                    color: #333;
-                }}
-                h1, h2, h3 {{
-                    color: #2c3e50;
-                }}
-                .container {{
-                    max-width: 1200px;
-                    margin: 0 auto;
-                }}
-                .summary {{
-                    background-color: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 5px;
-                    margin-bottom: 20px;
-                }}
-                .metrics-container {{
-                    display: flex;
-                    flex-wrap: wrap;
-                }}
-                .metric-group {{
-                    flex: 1;
-                    min-width: 300px;
-                    margin: 10px;
-                    background-color: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 5px;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                }}
-                th, td {{
-                    padding: 8px;
-                    text-align: left;
-                    border-bottom: 1px solid #ddd;
-                }}
-                th {{
-                    background-color: #f2f2f2;
-                }}
-                .chart-container {{
-                    margin: 20px 0;
-                }}
-                .positive {{
-                    color: green;
-                }}
-                .negative {{
-                    color: red;
-                }}
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                h1, h2, h3 {{ color: #333; }}
+                table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                .positive {{ color: green; }}
+                .negative {{ color: red; }}
+                .chart-container {{ margin: 20px 0; }}
+                .metrics-container {{ display: flex; flex-wrap: wrap; }}
+                .metric-box {{ flex: 1; min-width: 200px; margin: 10px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }}
+                .metric-value {{ font-size: 24px; font-weight: bold; margin: 10px 0; }}
+                .trades-table {{ max-height: 500px; overflow-y: auto; }}
             </style>
         </head>
         <body>
-            <div class="container">
-                <h1>Backtest Report: {strategy_name}</h1>
-                
-                <div class="summary">
-                    <h2>Summary</h2>
+            <h1>Backtest Report: {report_name}</h1>
+            
+            <h2>Summary</h2>
+            <div class="metrics-container">
+        """
+        
+        # Add summary metrics
+        if "performance_metrics" in backtest_results:
+            metrics = backtest_results["performance_metrics"]
+            for key, value in metrics.items():
+                if isinstance(value, (int, float, Decimal)):
+                    color_class = self._get_color_class(float(value)) if key in ["total_return", "annualized_return", "sharpe_ratio"] else ""
+                    html_content += f"""
+                    <div class="metric-box">
+                        <div>{key.replace('_', ' ').title()}</div>
+                        <div class="metric-value {color_class}">{value:.2f}%</div>
+                    </div>
+                    """ if key in ["total_return", "annualized_return"] else f"""
+                    <div class="metric-box">
+                        <div>{key.replace('_', ' ').title()}</div>
+                        <div class="metric-value {color_class}">{value:.2f}</div>
+                    </div>
+                    """
+        
+        html_content += """
+            </div>
+            
+            <h2>Equity Curve</h2>
+            <div class="chart-container">
+                <img src="charts/{}/equity_curve.png" alt="Equity Curve" style="width: 100%;">
+            </div>
+            
+            <h2>Drawdown</h2>
+            <div class="chart-container">
+                <img src="charts/{}/drawdown.png" alt="Drawdown" style="width: 100%;">
+            </div>
+            
+            <h2>Monthly Returns</h2>
+            <div class="chart-container">
+                <img src="charts/{}/monthly_returns.png" alt="Monthly Returns" style="width: 100%;">
+            </div>
+            
+            <h2>Trade Distribution</h2>
+            <div class="chart-container">
+                <img src="charts/{}/trade_distribution.png" alt="Trade Distribution" style="width: 100%;">
+            </div>
+        """.format(report_name, report_name, report_name, report_name)
+        
+        # Add trades table with timestamps for verification
+        if "portfolio_stats" in backtest_results and "trades_with_timestamps" in backtest_results["portfolio_stats"]:
+            trades = backtest_results["portfolio_stats"]["trades_with_timestamps"]
+            if trades:
+                html_content += """
+                <h2>Trades with Timestamps (for Return Verification)</h2>
+                <div class="trades-table">
                     <table>
                         <tr>
-                            <td><strong>Strategy:</strong></td>
-                            <td>{strategy_name}</td>
+                            <th>Symbol</th>
+                            <th>Action</th>
+                            <th>Entry Date</th>
+                            <th>Entry Price</th>
+                            <th>Quantity</th>
+                            <th>Exit Date</th>
+                            <th>Exit Price</th>
+                            <th>P&L</th>
+                            <th>P&L %</th>
+                            <th>Holding Period (Days)</th>
+                            <th>Strategy</th>
                         </tr>
+                """
+                
+                for trade in trades:
+                    pnl_class = "positive" if trade.get("pnl", 0) > 0 else "negative" if trade.get("pnl", 0) < 0 else ""
+                    html_content += f"""
                         <tr>
-                            <td><strong>Period:</strong></td>
-                            <td>{start_date} to {end_date}</td>
+                            <td>{trade.get("symbol", "")}</td>
+                            <td>{trade.get("action", "")}</td>
+                            <td>{trade.get("entry_timestamp", "")}</td>
+                            <td>{trade.get("entry_price", ""):.4f}</td>
+                            <td>{trade.get("quantity", ""):.2f}</td>
+                            <td>{trade.get("exit_timestamp", "N/A")}</td>
+                            <td>{"{:.4f}".format(float(trade.get("exit_price"))) if trade.get("exit_price") is not None else "N/A"}</td>
+                            <td class="{pnl_class}">{"{:.2f}".format(float(trade.get("pnl"))) if trade.get("pnl") is not None else "N/A"}</td>
+                            <td class="{pnl_class}">{"{:.2f}%".format(float(trade.get("pnl_percentage"))) if trade.get("pnl_percentage") is not None else "N/A"}</td>
+                            <td>{trade.get("holding_period_days", "N/A")}</td>
+                            <td>{trade.get("strategy", "")}</td>
                         </tr>
-                        <tr>
-                            <td><strong>Initial Capital:</strong></td>
-                            <td>${initial_capital:,.2f}</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Final Equity:</strong></td>
-                            <td>${final_equity:,.2f}</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Total Return:</strong></td>
-                            <td class="{self._get_color_class(metrics.get('total_return', 0))}">{metrics.get('total_return', 0):.2%}</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Annualized Return:</strong></td>
-                            <td class="{self._get_color_class(metrics.get('annualized_return', 0))}">{metrics.get('annualized_return', 0):.2%}</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Max Drawdown:</strong></td>
-                            <td class="negative">{metrics.get('max_drawdown', 0):.2%}</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Sharpe Ratio:</strong></td>
-                            <td class="{self._get_color_class(metrics.get('sharpe_ratio', 0))}">{metrics.get('sharpe_ratio', 0):.2f}</td>
-                        </tr>
+                    """
+                
+                html_content += """
                     </table>
                 </div>
-                
-                <div class="metrics-container">
-                    <div class="metric-group">
-                        <h2>Return Metrics</h2>
-                        <table>
-                            <tr>
-                                <td><strong>Total Return:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('total_return', 0))}">{metrics.get('total_return', 0):.2%}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Annualized Return:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('annualized_return', 0))}">{metrics.get('annualized_return', 0):.2%}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Volatility:</strong></td>
-                                <td>{metrics.get('volatility', 0):.2%}</td>
-                            </tr>
-                        </table>
-                    </div>
-                    
-                    <div class="metric-group">
-                        <h2>Risk Metrics</h2>
-                        <table>
-                            <tr>
-                                <td><strong>Max Drawdown:</strong></td>
-                                <td class="negative">{metrics.get('max_drawdown', 0):.2%}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Sharpe Ratio:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('sharpe_ratio', 0))}">{metrics.get('sharpe_ratio', 0):.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Sortino Ratio:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('sortino_ratio', 0))}">{metrics.get('sortino_ratio', 0):.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Calmar Ratio:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('calmar_ratio', 0))}">{metrics.get('calmar_ratio', 0):.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>VaR (95%):</strong></td>
-                                <td>{metrics.get('var_95', 0):.2%}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>CVaR (95%):</strong></td>
-                                <td>{metrics.get('cvar_95', 0):.2%}</td>
-                            </tr>
-                        </table>
-                    </div>
-                    
-                    <div class="metric-group">
-                        <h2>Trade Metrics</h2>
-                        <table>
-                            <tr>
-                                <td><strong>Total Trades:</strong></td>
-                                <td>{metrics.get('total_trades', 0)}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Winning Trades:</strong></td>
-                                <td>{metrics.get('winning_trades', 0)}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Losing Trades:</strong></td>
-                                <td>{metrics.get('losing_trades', 0)}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Win Rate:</strong></td>
-                                <td>{metrics.get('win_rate', 0):.2%}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Profit Factor:</strong></td>
-                                <td>{metrics.get('profit_factor', 0):.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Average Win:</strong></td>
-                                <td class="positive">${metrics.get('average_win', 0):,.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Average Loss:</strong></td>
-                                <td class="negative">${metrics.get('average_loss', 0):,.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Average Trade:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('average_trade', 0))}">${metrics.get('average_trade', 0):,.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Expectancy:</strong></td>
-                                <td class="{self._get_color_class(metrics.get('expectancy', 0))}">${metrics.get('expectancy', 0):,.2f}</td>
-                            </tr>
-                            <tr>
-                                <td><strong>Avg Holding Period:</strong></td>
-                                <td>{metrics.get('average_holding_period', 0):.1f} days</td>
-                            </tr>
-                        </table>
-                    </div>
-                </div>
-                
-                <div class="chart-container">
-                    <h2>Equity Curve</h2>
-                    <img src="charts/equity_curve.png" alt="Equity Curve" style="width: 100%;">
-                </div>
-                
-                <div class="chart-container">
-                    <h2>Drawdown</h2>
-                    <img src="charts/drawdown.png" alt="Drawdown" style="width: 100%;">
-                </div>
-                
-                <div class="chart-container">
-                    <h2>Monthly Returns</h2>
-                    <img src="charts/monthly_returns.png" alt="Monthly Returns" style="width: 100%;">
-                </div>
-                
-                <div class="chart-container">
-                    <h2>Trade Distribution</h2>
-                    <img src="charts/trade_distribution.png" alt="Trade Distribution" style="width: 100%;">
-                </div>
-            </div>
+                """
+        
+        # Close HTML
+        html_content += """
         </body>
         </html>
         """
         
         # Write HTML to file
-        with open(html_path, 'w') as f:
+        html_file = self.output_dir / f"{report_name}.html"
+        with open(html_file, "w") as f:
             f.write(html_content)
             
-        logger.info(f"Generated HTML report: {html_path}")
-        
-        return str(html_path)
+        return str(html_file)
         
     def generate_json_report(self, 
                              backtest_results: Dict,
@@ -368,158 +262,202 @@ class ReportGenerator:
         return str(json_path)
         
     def generate_csv_reports(self, 
-                             backtest_results: Dict,
-                             report_name: str) -> Dict[str, str]:
+                         backtest_results: Dict,
+                         report_name: str) -> Dict[str, str]:
         """
-        Generate CSV performance reports.
+        Generate CSV reports for the backtest results.
         
         Args:
-            backtest_results: Results from the backtest
-            report_name: Name for the report
+            backtest_results: Backtest results dictionary
+            report_name: Base name for the report files
             
         Returns:
-            Dict mapping report type to file path
+            Dictionary mapping report type to file path
         """
-        report_dir = self.output_dir / report_name
-        csv_paths = {}
+        csv_files = {}
         
-        # Extract data from backtest results
-        equity_curve = backtest_results.get("equity_curve", [])
-        trades = backtest_results.get("trades", [])
-        metrics = backtest_results.get("metrics", {})
+        # Create directory for CSV reports
+        csv_dir = self.output_dir / "csv"
+        csv_dir.mkdir(exist_ok=True)
         
         # Generate equity curve CSV
-        if equity_curve:
-            equity_df = pd.DataFrame(equity_curve)
-            equity_path = report_dir / f"{report_name}_equity.csv"
-            equity_df.to_csv(equity_path, index=False)
-            csv_paths["equity"] = str(equity_path)
+        if "equity_curve" in backtest_results:
+            equity_df = pd.DataFrame(backtest_results["equity_curve"])
+            equity_file = csv_dir / f"{report_name}_equity_curve.csv"
+            equity_df.to_csv(equity_file)
+            csv_files["equity_curve"] = str(equity_file)
             
         # Generate trades CSV
-        if trades:
-            trades_df = pd.DataFrame(trades)
-            trades_path = report_dir / f"{report_name}_trades.csv"
-            trades_df.to_csv(trades_path, index=False)
-            csv_paths["trades"] = str(trades_path)
+        if "trades" in backtest_results:
+            trades_df = pd.DataFrame(backtest_results["trades"])
+            trades_file = csv_dir / f"{report_name}_trades.csv"
+            trades_df.to_csv(trades_file)
+            csv_files["trades"] = str(trades_file)
             
-        # Generate metrics CSV
-        if metrics:
-            # Convert metrics to DataFrame
-            metrics_df = pd.DataFrame([metrics])
-            metrics_path = report_dir / f"{report_name}_metrics.csv"
-            metrics_df.to_csv(metrics_path, index=False)
-            csv_paths["metrics"] = str(metrics_path)
+        # Generate trades with timestamps CSV for verification
+        if "portfolio_stats" in backtest_results and "trades_with_timestamps" in backtest_results["portfolio_stats"]:
+            trades_with_timestamps = backtest_results["portfolio_stats"]["trades_with_timestamps"]
+            if trades_with_timestamps:
+                trades_timestamps_df = pd.DataFrame(trades_with_timestamps)
+                trades_timestamps_file = csv_dir / f"{report_name}_trades_with_timestamps.csv"
+                trades_timestamps_df.to_csv(trades_timestamps_file)
+                csv_files["trades_with_timestamps"] = str(trades_timestamps_file)
+                
+        # Generate monthly returns CSV
+        if "monthly_returns" in backtest_results:
+            monthly_df = pd.DataFrame(backtest_results["monthly_returns"])
+            monthly_file = csv_dir / f"{report_name}_monthly_returns.csv"
+            monthly_df.to_csv(monthly_file)
+            csv_files["monthly_returns"] = str(monthly_file)
             
-        logger.info(f"Generated CSV reports: {', '.join(csv_paths.keys())}")
-        
-        return csv_paths
+        return csv_files
         
     def generate_charts(self, 
-                        backtest_results: Dict,
-                        chart_dir: Path) -> None:
+                    backtest_results: Dict,
+                    chart_dir: Path) -> None:
         """
         Generate charts for the backtest results.
         
         Args:
-            backtest_results: Results from the backtest
+            backtest_results: Backtest results dictionary
             chart_dir: Directory to save charts
         """
-        # Extract data from backtest results
-        equity_curve = backtest_results.get("equity_curve", [])
-        trades = backtest_results.get("trades", [])
+        # Create chart directory
+        chart_dir.mkdir(exist_ok=True)
         
-        if not equity_curve:
-            logger.warning("No equity curve data available for charts")
-            return
+        # Generate equity curve chart
+        if "equity_curve" in backtest_results:
+            equity_df = pd.DataFrame(backtest_results["equity_curve"])
+            equity_df = self._prepare_data_for_charts(equity_df)
             
-        # Convert equity curve to DataFrame
-        try:
-            equity_df = pd.DataFrame(equity_curve)
+            # Get trades with timestamps for plotting buy/sell points
+            trades_with_timestamps = None
+            if "portfolio_stats" in backtest_results and "trades_with_timestamps" in backtest_results["portfolio_stats"]:
+                trades_with_timestamps = backtest_results["portfolio_stats"]["trades_with_timestamps"]
             
-            # Handle different timestamp column names
-            timestamp_col = None
-            for col in ['timestamp', 'date', 'time']:
-                if col in equity_df.columns:
-                    timestamp_col = col
-                    break
-                    
-            if timestamp_col:
-                equity_df[timestamp_col] = pd.to_datetime(equity_df[timestamp_col])
-                equity_df.set_index(timestamp_col, inplace=True)
-                equity_df.sort_index(inplace=True)
-            
-            # Generate equity curve chart
-            try:
-                self._plot_equity_curve(equity_df, chart_dir / "equity_curve.png")
-            except Exception as e:
-                logger.error(f"Error plotting equity curve: {str(e)}")
+            self._plot_equity_curve(
+                equity_df, 
+                chart_dir / "equity_curve.png",
+                trades_with_timestamps
+            )
             
             # Generate drawdown chart
-            try:
-                self._plot_drawdown(equity_df, chart_dir / "drawdown.png")
-            except Exception as e:
-                logger.error(f"Error plotting drawdown: {str(e)}")
+            self._plot_drawdown(equity_df, chart_dir / "drawdown.png")
             
             # Generate monthly returns chart
-            try:
-                self._plot_monthly_returns(equity_df, chart_dir / "monthly_returns.png")
-            except Exception as e:
-                logger.error(f"Error plotting monthly returns: {str(e)}")
-            
-            # Generate trade distribution chart
-            if trades:
-                try:
-                    self._plot_trade_distribution(trades, chart_dir / "trade_distribution.png")
-                except Exception as e:
-                    logger.error(f"Error plotting trade distribution: {str(e)}")
-                
-            logger.info(f"Generated charts in {chart_dir}")
-            
-        except Exception as e:
-            logger.error(f"Error generating charts: {str(e)}")
+            self._plot_monthly_returns(equity_df, chart_dir / "monthly_returns.png")
+        
+        # Generate trade distribution chart
+        if "trades" in backtest_results:
+            self._plot_trade_distribution(backtest_results["trades"], chart_dir / "trade_distribution.png")
+        
+        logger.info(f"Generated charts in {chart_dir}")
         
     def _plot_equity_curve(self, 
-                           equity_df: pd.DataFrame,
-                           output_path: Path) -> None:
+                       equity_df: pd.DataFrame,
+                       output_path: Path,
+                       trades_with_timestamps: Optional[List[Dict]] = None) -> None:
         """
-        Plot equity curve.
+        Plot the equity curve with buy/sell points.
         
         Args:
-            equity_df: DataFrame with equity history
-            output_path: Path to save the chart
+            equity_df: DataFrame with equity curve data
+            output_path: Path to save the plot
+            trades_with_timestamps: List of trades with timestamps for marking buy/sell points
         """
-        plt.figure(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(12, 6))
         
-        # Prepare data for plotting (convert Decimal to float)
-        equity_df = self._prepare_data_for_charts(equity_df)
-        
+        # Convert dates to datetime if they're not already
+        if not pd.api.types.is_datetime64_any_dtype(equity_df.index):
+            equity_df.index = pd.to_datetime(equity_df.index)
+            
         # Plot equity curve
-        plt.plot(equity_df.index, equity_df['equity'], label='Equity', color='#1f77b4', linewidth=2)
+        ax.plot(equity_df.index, equity_df['equity'], label='Equity', linewidth=2, color='#1f77b4')
         
-        # Add initial equity as horizontal line
-        initial_equity = equity_df['equity'].iloc[0]
-        plt.axhline(y=initial_equity, color='#ff7f0e', linestyle='--', 
-                   label=f'Initial Capital (${initial_equity:,.2f})')
+        # Add buy/sell markers if trades data is available
+        if trades_with_timestamps:
+            # Convert trades to DataFrame for easier processing
+            trades_df = pd.DataFrame(trades_with_timestamps)
+            
+            # Process entry points (buys)
+            if 'entry_timestamp' in trades_df.columns:
+                trades_df['entry_timestamp'] = pd.to_datetime(trades_df['entry_timestamp'])
+                
+                # Filter to only include timestamps within the equity curve timeframe
+                valid_entries = trades_df[trades_df['entry_timestamp'].between(
+                    equity_df.index.min(), equity_df.index.max())]
+                
+                # Plot buy points
+                buy_points = valid_entries[valid_entries['action'] == 'BUY']
+                if not buy_points.empty:
+                    # For each buy point, find the corresponding equity value
+                    for _, trade in buy_points.iterrows():
+                        # Find closest date in equity curve
+                        closest_date = equity_df.index[equity_df.index.get_indexer([trade['entry_timestamp']], method='nearest')[0]]
+                        equity_value = equity_df.loc[closest_date, 'equity']
+                        ax.scatter(trade['entry_timestamp'], equity_value, color='green', marker='^', s=100, label='_Buy')
+                
+                # Plot sell points (short entries)
+                sell_points = valid_entries[valid_entries['action'] == 'SELL']
+                if not sell_points.empty:
+                    # For each sell point, find the corresponding equity value
+                    for _, trade in sell_points.iterrows():
+                        # Find closest date in equity curve
+                        closest_date = equity_df.index[equity_df.index.get_indexer([trade['entry_timestamp']], method='nearest')[0]]
+                        equity_value = equity_df.loc[closest_date, 'equity']
+                        ax.scatter(trade['entry_timestamp'], equity_value, color='red', marker='v', s=100, label='_Sell')
+            
+            # Process exit points
+            if 'exit_timestamp' in trades_df.columns:
+                # Filter out NaN exit timestamps (open positions)
+                closed_trades = trades_df.dropna(subset=['exit_timestamp'])
+                if not closed_trades.empty:
+                    closed_trades['exit_timestamp'] = pd.to_datetime(closed_trades['exit_timestamp'])
+                    
+                    # Filter to only include timestamps within the equity curve timeframe
+                    valid_exits = closed_trades[closed_trades['exit_timestamp'].between(
+                        equity_df.index.min(), equity_df.index.max())]
+                    
+                    # Plot exit points
+                    for _, trade in valid_exits.iterrows():
+                        # Find closest date in equity curve
+                        closest_date = equity_df.index[equity_df.index.get_indexer([trade['exit_timestamp']], method='nearest')[0]]
+                        equity_value = equity_df.loc[closest_date, 'equity']
+                        
+                        # Use different markers for buy exits vs sell exits
+                        if trade['action'] == 'BUY':
+                            ax.scatter(trade['exit_timestamp'], equity_value, color='red', marker='x', s=100, label='_Exit Long')
+                        else:
+                            ax.scatter(trade['exit_timestamp'], equity_value, color='green', marker='x', s=100, label='_Exit Short')
         
-        # Format plot
-        plt.title('Equity Curve', fontsize=16)
-        plt.xlabel('Date', fontsize=12)
-        plt.ylabel('Equity ($)', fontsize=12)
-        plt.grid(True, alpha=0.3)
-        plt.legend()
+        # Add benchmark if available
+        if 'benchmark' in equity_df.columns:
+            ax.plot(equity_df.index, equity_df['benchmark'], label='Benchmark', linewidth=2, color='#ff7f0e', alpha=0.7)
+            
+        # Format x-axis to show dates nicely
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        fig.autofmt_xdate()
         
-        # Format y-axis with dollar signs
-        plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'${x:,.0f}'))
+        # Add labels and title
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Equity')
+        ax.set_title('Equity Curve with Trade Points')
         
-        # Format x-axis dates
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
-        plt.gcf().autofmt_xdate()
+        # Add legend with unique entries
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
+        
+        # Add grid
+        ax.grid(True, alpha=0.3)
+        
+        # Tight layout
+        plt.tight_layout()
         
         # Save figure
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=100)
-        plt.close()
+        plt.savefig(output_path)
+        plt.close(fig)
         
     def _plot_drawdown(self, 
                        equity_df: pd.DataFrame,

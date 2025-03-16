@@ -45,7 +45,7 @@ def parse_args():
     backtest_parser.add_argument('--timeframe', default='1d', help='Timeframe for backtest (e.g., 1d, 1h)')
     backtest_parser.add_argument('--start-date', help='Start date (YYYY-MM-DD)')
     backtest_parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
-    backtest_parser.add_argument('--capital', type=float, default=100000, help='Initial capital')
+    backtest_parser.add_argument('--capital', type=float, default=10000, help='Initial capital')
     backtest_parser.add_argument('--risk', type=float, default=1.0, help='Risk percentage per trade')
     backtest_parser.add_argument('--fast-ma', type=int, default=20, help='Fast moving average period')
     backtest_parser.add_argument('--slow-ma', type=int, default=50, help='Slow moving average period')

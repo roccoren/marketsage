@@ -55,6 +55,29 @@ class Position:
     def to_dict(self) -> Dict:
         """Convert position to dictionary."""
         return asdict(self)
+        
+    def get_trade_details(self) -> Dict:
+        """Get detailed trade information for verification."""
+        details = {
+            "id": self.id,
+            "symbol": self.symbol,
+            "action": self.action,
+            "entry_price": float(self.entry_price),
+            "entry_timestamp": self.entry_timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "quantity": float(self.quantity),
+            "strategy": self.strategy_name
+        }
+        
+        if self.status == "CLOSED":
+            details.update({
+                "exit_price": float(self.exit_price),
+                "exit_timestamp": self.exit_timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "pnl": float(self.pnl),
+                "pnl_percentage": float(self.pnl_percentage),
+                "holding_period_days": (self.exit_timestamp - self.entry_timestamp).days
+            })
+            
+        return details
 
 class PortfolioManager:
     """
@@ -335,7 +358,7 @@ class PortfolioManager:
             symbol: Trading symbol
             price: Entry price
             risk_percentage: Percentage of capital to risk
-            stop_loss: Stop loss price (for risk calculation)
+            stop_loss: Optional stop loss price (for risk calculation)
             
         Returns:
             Position size (quantity)
@@ -344,67 +367,109 @@ class PortfolioManager:
         if not isinstance(risk_percentage, Decimal):
             risk_percentage = Decimal(str(risk_percentage))
             
-        # Make position sizing more aggressive by multiplying risk percentage
-        risk_percentage = risk_percentage * Decimal("5.0")
+        # Ensure price is positive
+        if price <= Decimal("0"):
+            logger.warning(f"Invalid price {price} for position sizing")
+            return Decimal("0")
             
         # Calculate risk amount
         risk_amount = self.current_capital * risk_percentage / Decimal("100.0")
         
-        # If stop loss is provided, calculate position size based on risk per trade
-        if stop_loss is not None:
+        # Ensure risk amount is positive
+        if risk_amount <= Decimal("0"):
+            logger.warning(f"Negative or zero risk amount calculated: {risk_amount}")
+            return Decimal("0")
+        
+        # Limit risk amount to a maximum of 2% of capital regardless of input
+        max_risk_amount = self.current_capital * Decimal("0.02")
+        risk_amount = min(risk_amount, max_risk_amount)
+        
+        # Calculate position size
+        if stop_loss is not None and stop_loss > Decimal("0"):
             risk_per_unit = abs(price - stop_loss)
+            # Ensure minimum distance between price and stop loss to avoid excessive position sizing
+            min_distance = price * Decimal("0.01")  # Minimum 1% distance
+            risk_per_unit = max(risk_per_unit, min_distance)
+            
             if risk_per_unit > Decimal("0.0"):
                 quantity = risk_amount / risk_per_unit
-                return quantity
-                
-        # Default to percentage of capital
-        quantity = risk_amount / price
+            else:
+                # Fallback to percentage of capital if risk_per_unit is zero
+                quantity = risk_amount / price
+        else:
+            # Default to percentage of capital
+            quantity = risk_amount / price
+        
+        # Limit position size to a maximum of 10% of capital
+        max_position_size = self.current_capital * Decimal("0.1") / price
+        quantity = min(quantity, max_position_size)
+        
+        # Ensure quantity is positive
+        if quantity <= Decimal("0"):
+            logger.warning(f"Calculated non-positive quantity: {quantity}")
+            return Decimal("0")
+            
+        # Ensure quantity doesn't exceed available capital
+        max_affordable = self.current_capital / price
+        quantity = min(quantity, max_affordable)
+        
         return quantity
         
-    def get_portfolio_stats(self) -> Dict:
+    def get_all_trades_with_timestamps(self) -> List[Dict]:
         """
-        Get portfolio statistics.
+        Get all trades with timestamps for verification of total return.
         
         Returns:
-            Dict with portfolio statistics
+            List of trade details with entry and exit timestamps
         """
+        all_trades = []
+        
+        # Add closed positions
+        for position in self.closed_positions:
+            all_trades.append(position.get_trade_details())
+            
+        # Add open positions
+        for position_id, position in self.positions.items():
+            all_trades.append(position.get_trade_details())
+            
+        # Sort by entry timestamp
+        all_trades.sort(key=lambda x: x["entry_timestamp"])
+        
+        return all_trades
+        
+    def get_portfolio_stats(self) -> Dict:
+        """Get comprehensive portfolio statistics."""
         stats = {
-            "initial_capital": self.initial_capital,
-            "current_capital": self.current_capital,
-            "current_equity": self.equity_history[-1]["equity"] if self.equity_history else self.current_capital,
-            "open_positions": len(self.positions),
-            "closed_positions": len(self.closed_positions),
-            "total_trades": len(self.trade_history),
-            "max_drawdown": self.max_drawdown,
-            "current_drawdown": self.current_drawdown,
-            "peak_equity": self.peak_equity
+            "initial_capital": float(self.initial_capital),
+            "current_cash": float(self.current_capital),
+            "open_positions_count": len(self.positions),
+            "closed_positions_count": len(self.closed_positions),
+            "total_trades": len(self.closed_positions) + len(self.positions),
+            "trades_with_timestamps": self.get_all_trades_with_timestamps()
         }
         
-        # Calculate win/loss stats
+        # Calculate win rate and other metrics from closed positions
         if self.closed_positions:
-            winning_trades = [p for p in self.closed_positions if p.pnl > Decimal("0.0")]
-            losing_trades = [p for p in self.closed_positions if p.pnl <= Decimal("0.0")]
+            winning_trades = [p for p in self.closed_positions if p.pnl > Decimal("0")]
+            losing_trades = [p for p in self.closed_positions if p.pnl <= Decimal("0")]
             
-            stats["winning_trades"] = len(winning_trades)
-            stats["losing_trades"] = len(losing_trades)
-            stats["win_rate"] = Decimal(str(len(winning_trades) / len(self.closed_positions)))
+            stats.update({
+                "winning_trades": len(winning_trades),
+                "losing_trades": len(losing_trades),
+                "win_rate": len(winning_trades) / len(self.closed_positions) if self.closed_positions else 0,
+                "average_win": float(sum(p.pnl for p in winning_trades) / len(winning_trades)) if winning_trades else 0,
+                "average_loss": float(sum(p.pnl for p in losing_trades) / len(losing_trades)) if losing_trades else 0,
+                "largest_win": float(max(p.pnl for p in winning_trades)) if winning_trades else 0,
+                "largest_loss": float(min(p.pnl for p in losing_trades)) if losing_trades else 0,
+                "average_holding_period": sum((p.exit_timestamp - p.entry_timestamp).days for p in self.closed_positions) / len(self.closed_positions) if self.closed_positions else 0,
+            })
             
-            if winning_trades:
-                stats["avg_win"] = sum(p.pnl for p in winning_trades) / len(winning_trades)
-            else:
-                stats["avg_win"] = Decimal("0.0")
-                
-            if losing_trades:
-                stats["avg_loss"] = sum(p.pnl for p in losing_trades) / len(losing_trades)
-            else:
-                stats["avg_loss"] = Decimal("0.0")
-                
-            if stats["avg_loss"] != Decimal("0.0"):
-                stats["profit_factor"] = abs(stats["avg_win"] * stats["winning_trades"] / (stats["avg_loss"] * stats["losing_trades"]))
-            else:
-                stats["profit_factor"] = Decimal("0.0")
-                
-        return stats 
+            # Calculate profit factor
+            total_gains = sum(p.pnl for p in winning_trades) if winning_trades else Decimal("0")
+            total_losses = abs(sum(p.pnl for p in losing_trades)) if losing_trades else Decimal("0")
+            stats["profit_factor"] = float(total_gains / total_losses) if total_losses > Decimal("0") else float("inf")
+            
+        return stats
 
     def update_portfolio(self, execution: Dict) -> Optional[Position]:
         """

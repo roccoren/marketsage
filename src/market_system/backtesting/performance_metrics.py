@@ -9,6 +9,9 @@ from typing import Dict, List, Optional, Union
 from decimal import Decimal
 import math
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PerformanceMetrics:
     """
@@ -162,7 +165,22 @@ class PerformanceMetrics:
         if years < 0.01:  # Less than ~3.65 days
             return 0.0
             
-        return float(((1.0 + total_return) ** (1.0 / years)) - 1.0)
+        # Handle negative returns to avoid complex numbers
+        if total_return < -1.0:
+            # For catastrophic losses, just return the total return
+            return float(total_return)
+            
+        try:
+            # Use safe calculation to avoid complex numbers
+            if total_return >= 0:
+                return float(((1.0 + total_return) ** (1.0 / years)) - 1.0)
+            else:
+                # For negative returns, use a different approach
+                return float(-1.0 * ((1.0 - abs(total_return)) ** (1.0 / years) - 1.0))
+        except (ValueError, TypeError, OverflowError) as e:
+            logger.warning(f"Error calculating annualized return: {e}. Total return: {total_return}, Years: {years}")
+            # Fallback to simple annualized return
+            return float(total_return / years)
     
     @staticmethod
     def calculate_daily_returns(equity_df: pd.DataFrame) -> pd.Series:

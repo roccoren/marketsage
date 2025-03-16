@@ -42,14 +42,30 @@ pip install -r requirements.txt
 
 The system supports periodic data fetching to keep your market data up-to-date. You can set up automated data fetching using the following approaches:
 
-#### 1. Using the Data Fetcher Script
+#### 1. Using the Market Data Fetcher Script
 
 ```bash
 # Fetch data for specific symbols
-python data_fetcher.py --market hkex --symbols 0700.HK 9988.HK --start-date 2023-01-01
+python fetch_market_data.py --market hkex --symbols 0700.HK,9988.HK --start-date 2023-01-01
 
 # Fetch data for an entire market
-python data_fetcher.py --market nasdaq --all-symbols --start-date 2023-01-01
+python fetch_market_data.py --market nasdaq --start-date 2023-01-01
+```
+
+Available options for the fetch_market_data.py script:
+```
+  -m, --market MARKET       Specific market to fetch (e.g., nyse, nasdaq)
+  -s, --symbols SYMBOLS     Comma-separated list of symbols to fetch
+  --start-date START_DATE   Start date (YYYY-MM-DD format, default: 2020-01-01)
+  --end-date END_DATE       End date (YYYY-MM-DD format, default: today)
+  --data-dir DATA_DIR       Directory for storing data
+  --config-dir CONFIG_DIR   Directory containing market configuration files
+  --max-concurrent MAX_CONCURRENT
+                            Maximum concurrent downloads
+  --batch-size BATCH_SIZE   Number of symbols to process in each batch
+  --requests-per-minute REQUESTS_PER_MINUTE
+                            Maximum API requests per minute
+  --continue-on-error       Continue processing if a market fails
 ```
 
 #### 2. Setting Up Scheduled Data Updates
@@ -59,14 +75,14 @@ You can set up a cron job (Linux/Mac) or Task Scheduler (Windows) to run the dat
 **Linux/Mac (crontab):**
 ```
 # Run daily at 6 PM
-0 18 * * * cd /path/to/stockscan && python data_fetcher.py --market hkex --all-symbols --days 1
+0 18 * * * cd /path/to/stockscan && python fetch_market_data.py --market hkex --start-date $(date -d "yesterday" +\%Y-\%m-\%d)
 ```
 
 **Windows (Task Scheduler):**
 Create a batch file `update_data.bat`:
 ```batch
 cd C:\path\to\stockscan
-python data_fetcher.py --market hkex --all-symbols --days 1
+python fetch_market_data.py --market hkex --start-date %date:~10,4%-%date:~4,2%-%date:~7,2%
 ```
 
 Then schedule this batch file to run daily using Task Scheduler.
@@ -76,19 +92,24 @@ Then schedule this batch file to run daily using Task Scheduler.
 You can also update data programmatically:
 
 ```python
-from src.market_system.data.data_fetcher import DataFetcher
+from src.market_data.providers.enhanced_fetcher import EnhancedMarketFetcher
+from datetime import datetime
 
 # Initialize data fetcher
-fetcher = DataFetcher(base_path="data")
+fetcher = EnhancedMarketFetcher(data_dir="data")
 
 # Update data for specific market and symbols
-fetcher.update_data(
-    market="hkex",
-    symbols=["0700.HK", "9988.HK"],
-    start_date="2023-01-01",
-    end_date="2023-12-31",
-    timeframe="1d"
-)
+async def update_market_data():
+    await fetcher.fetch_market_data(
+        market="hkex",
+        symbols=["0700.HK", "9988.HK"],
+        start_date=datetime(2023, 1, 1),
+        end_date=datetime.now()
+    )
+
+# Run the async function
+import asyncio
+asyncio.run(update_market_data())
 ```
 
 ### Data Structure
@@ -347,4 +368,33 @@ python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2
 
 # Hourly timeframe
 python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --timeframe 1h --strategies mean_reversion
+```
+
+### Example 5: Using All Available Strategies
+
+```bash
+# Running all strategies on a single symbol
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies trend_following mean_reversion moving_average_crossover volatility_breakout volume_spike --generate-reports
+
+# Running all strategies with custom parameters
+python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies trend_following mean_reversion moving_average_crossover volatility_breakout volume_spike --fast-period 15 --slow-period 40 --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70 --position-size 0.15 --stop-loss 0.05 --take-profit 0.1 --generate-reports
+```
+
+### Example 6: Strategy-Specific Backtests
+
+```bash
+# Trend Following Strategy
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies trend_following --fast-period 10 --slow-period 30 --generate-reports
+
+# Mean Reversion Strategy
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies mean_reversion --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70 --generate-reports
+
+# Moving Average Crossover Strategy
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies moving_average_crossover --generate-reports
+
+# Volatility Breakout Strategy
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies volatility_breakout --generate-reports
+
+# Volume Spike Strategy
+python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies volume_spike --generate-reports
 ```

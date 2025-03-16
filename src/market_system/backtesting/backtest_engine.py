@@ -40,35 +40,56 @@ class BacktestEngine:
                  portfolio_manager: Optional[PortfolioManager] = None,
                  execution_handler: Optional[ExecutionHandler] = None):
         """
-        Initialize the backtesting engine.
+        Initialize the backtest engine.
         
         Args:
-            initial_capital: Starting capital for the backtest
-            start_date: Backtest start date
-            end_date: Backtest end date
-            data_provider: Data provider for historical market data
-            strategies: List of strategies to backtest
-            portfolio_manager: Custom portfolio manager or None for default
-            execution_handler: Custom execution handler or None for default
+            initial_capital: Initial capital for the backtest
+            start_date: Start date for the backtest
+            end_date: End date for the backtest
+            data_provider: Data provider for market data
+            strategies: List of strategies to use
+            portfolio_manager: Optional portfolio manager (will create one if not provided)
+            execution_handler: Optional execution handler (will create one if not provided)
         """
         self.initial_capital = initial_capital
         self.start_date = start_date
         self.end_date = end_date
         self.data_provider = data_provider
-        self.strategies = {strategy.name: strategy for strategy in strategies}
-        self.portfolio_manager = portfolio_manager or PortfolioManager(initial_capital)
-        self.execution_handler = execution_handler or ExecutionHandler()
         
-        # Results storage
-        self.trades = []
-        self.equity_curve = []
-        self.performance_metrics = {}
+        # Convert strategies list to dictionary
+        if isinstance(strategies, list):
+            self.strategies = {f"strategy_{i}": strategy for i, strategy in enumerate(strategies)}
+        else:
+            self.strategies = {"strategy_0": strategies}
+            
+        # Initialize portfolio manager if not provided
+        if portfolio_manager is None:
+            self.portfolio_manager = PortfolioManager(initial_capital=initial_capital)
+        else:
+            self.portfolio_manager = portfolio_manager
+            
+        # Initialize execution handler if not provided
+        if execution_handler is None:
+            self.execution_handler = ExecutionHandler()
+        else:
+            self.execution_handler = execution_handler
+            
+        # Initialize market states
         self.market_states = {}
-        self.signals = []
         
-        logger.info(f"BacktestEngine initialized with {len(strategies)} strategies, " 
-                   f"period: {start_date.date()} to {end_date.date()}, "
-                   f"initial capital: {initial_capital}")
+        # Initialize signals and trades
+        self.signals = []
+        self.trades = []
+        
+        # Initialize performance metrics
+        self.performance_metrics = {}
+        
+        logger.info(f"BacktestEngine initialized with {len(self.strategies)} strategies")
+        logger.info(f"Backtest period: {start_date} to {end_date}")
+        logger.info(f"Initial capital: {initial_capital}")
+        
+        # Initialize empty equity curve
+        # self.equity_curve = []
         
     def run(self, 
             symbols: List[str], 
@@ -231,6 +252,11 @@ class BacktestEngine:
                         current_price = Decimal(str(data.iloc[-1]['close']))
                         previous_price = Decimal(str(data.iloc[-2]['close']))
                         
+                        # Skip if price is invalid
+                        if current_price <= Decimal("0") or previous_price <= Decimal("0"):
+                            logger.warning(f"Invalid price for {symbol}: current={current_price}, previous={previous_price}")
+                            continue
+                        
                         # Calculate price change
                         price_change = (current_price / previous_price - 1) * Decimal('100')
                         
@@ -271,6 +297,17 @@ class BacktestEngine:
                             symbol, current_price, fixed_risk, stop_loss
                         )
                         
+                        # Skip if position size is invalid
+                        if position_size <= Decimal("0"):
+                            logger.warning(f"Invalid position size for {symbol}: {position_size}")
+                            continue
+                            
+                        # Check if we have enough capital
+                        cost = position_size * current_price
+                        if cost > self.portfolio_manager.current_capital:
+                            logger.warning(f"Not enough capital to open position: {symbol} {action} {position_size} @ {current_price}")
+                            continue
+                        
                         logger.info(f"Forced signal: {action} for {symbol} at {current_price}, position size: {position_size}")
                         
                         # Execute order
@@ -287,9 +324,13 @@ class BacktestEngine:
                         # Update portfolio with the execution
                         if execution:
                             logger.info(f"Executed order: {execution}")
-                            self.portfolio_manager.update_portfolio(execution)
+                            position = self.portfolio_manager.update_portfolio(execution)
+                            if not position:
+                                logger.warning(f"Failed to open position for {symbol}")
                     except Exception as e:
                         logger.error(f"Error forcing signal: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
             
             # Update positions (check for stop loss/take profit)
             self.portfolio_manager.update_positions(timestamp, current_data)
@@ -452,84 +493,128 @@ class BacktestEngine:
             return None
     
     def _execute_signals(self, 
-                        signals: List[Signal],
-                        current_data: Dict[str, pd.DataFrame],
-                        timestamp: datetime,
-                        risk_percentage: Decimal) -> None:
+                    signals: List[Signal],
+                    current_data: Dict[str, pd.DataFrame],
+                    timestamp: datetime,
+                    risk_percentage: Decimal) -> None:
         """
-        Execute signals by opening positions.
+        Execute trading signals.
         
         Args:
-            signals: List of signals to execute
-            current_data: Dict mapping symbols to market data
+            signals: List of trading signals to execute
+            current_data: Current market data
             timestamp: Current timestamp
-            risk_percentage: Percentage of capital to risk per trade
+            risk_percentage: Risk percentage for position sizing
         """
         if not signals:
-            logger.info(f"No signals to execute at {timestamp}")
             return
             
-        # Sort signals by confidence
-        signals.sort(key=lambda s: s.confidence, reverse=True)
-        
-        logger.info(f"Found {len(signals)} signals to execute at {timestamp}")
-        
-        # Execute signals
         for signal in signals:
             symbol = signal.symbol
+            action = signal.action
             
-            # Skip if no market data for this symbol
+            # Skip if no data for symbol
             if symbol not in current_data:
-                logger.warning(f"No market data for {symbol} at {timestamp}")
+                logger.warning(f"No data for symbol {symbol} at {timestamp}")
                 continue
                 
-            # Get current price from the most recent data
+            # Get current price
             current_price = Decimal(str(current_data[symbol].iloc[-1]['close']))
             
-            # Get strategy
-            strategy = self.strategies.get(signal.strategy_name)
-            if not strategy:
-                logger.warning(f"Strategy {signal.strategy_name} not found")
+            # Skip if price is zero or negative
+            if current_price <= Decimal("0"):
+                logger.warning(f"Invalid price {current_price} for {symbol} at {timestamp}")
                 continue
                 
-            # Convert data to MarketData objects for stop loss and take profit calculation
-            market_data_list = self._convert_to_market_data(symbol, current_data[symbol])
-            
-            # Calculate stop loss and take profit
-            stop_loss = Decimal(str(strategy.get_stop_loss(market_data_list, signal)))
-            take_profit = Decimal(str(strategy.get_take_profit(market_data_list, signal)))
-            
-            logger.info(f"Signal for {symbol}: {signal.action} at {current_price}, stop_loss: {stop_loss}, take_profit: {take_profit}")
-            
             # Calculate position size
-            position_size = self.portfolio_manager.get_position_sizing(
-                symbol, current_price, risk_percentage, stop_loss
-            )
-            
-            logger.info(f"Calculated position size: {position_size}")
-            
-            # Skip if position size is too small
-            if position_size <= Decimal("0.0"):
-                logger.warning(f"Position size too small: {position_size}")
+            if signal.quantity is not None:
+                quantity = signal.quantity
+            else:
+                # Calculate position size based on risk
+                stop_loss = None
+                if signal.stop_loss is not None:
+                    stop_loss = current_price * (Decimal("1") - signal.stop_loss) if action == "BUY" else current_price * (Decimal("1") + signal.stop_loss)
+                
+                quantity = self.portfolio_manager.get_position_sizing(
+                    symbol=symbol,
+                    price=current_price,
+                    risk_percentage=risk_percentage,
+                    stop_loss=stop_loss
+                )
+                
+            # Skip if quantity is zero
+            if quantity <= Decimal("0"):
+                logger.warning(f"Zero quantity for {symbol} at {timestamp}")
                 continue
                 
-            # Execute order
-            execution = self.execution_handler.execute_order(
+            # Check if we already have a position in this symbol
+            existing_position = None
+            for pos_id, pos in self.portfolio_manager.positions.items():
+                if pos.symbol == symbol:
+                    existing_position = pos
+                    break
+                    
+            # Handle existing position
+            if existing_position:
+                # If signal is in the same direction, ignore
+                if existing_position.action == action:
+                    continue
+                    
+                # If signal is in the opposite direction, close position
+                execution_result = self.execution_handler.execute_order(
+                    symbol=symbol,
+                    action="SELL" if existing_position.action == "BUY" else "BUY",
+                    price=current_price,
+                    quantity=existing_position.quantity,
+                    timestamp=timestamp,
+                    market_data=current_data.get(symbol)
+                )
+                
+                # Update portfolio with execution result
+                closed_position = self.portfolio_manager.close_position(
+                    position_id=existing_position.id,
+                    price=execution_result["executed_price"],
+                    timestamp=timestamp
+                )
+                
+                if closed_position:
+                    logger.info(f"Closed position: {symbol} at {execution_result['executed_price']} with P&L: {closed_position.pnl}")
+                    
+                    # Record trade details for verification
+                    trade_details = closed_position.get_trade_details()
+                    logger.info(f"Trade details: {trade_details}")
+                
+            # Execute new order
+            execution_result = self.execution_handler.execute_order(
                 symbol=symbol,
-                action=signal.action,
+                action=action,
                 price=current_price,
-                quantity=position_size,
+                quantity=quantity,
                 timestamp=timestamp,
-                stop_loss=stop_loss,
-                take_profit=take_profit
+                market_data=current_data.get(symbol),
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit
             )
             
-            # Update portfolio with the execution
-            if execution:
-                logger.info(f"Executed order: {execution}")
-                self.portfolio_manager.update_portfolio(execution)
-            else:
-                logger.warning(f"Failed to execute order for {symbol}")
+            # Update portfolio with execution result
+            position = self.portfolio_manager.open_position(
+                symbol=symbol,
+                action=action,
+                price=execution_result["executed_price"],
+                quantity=execution_result["executed_quantity"],
+                timestamp=timestamp,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                strategy_name=signal.strategy_name,
+                metadata={"signal": signal.to_dict()}
+            )
+            
+            if position:
+                logger.info(f"Opened position: {symbol} at {execution_result['executed_price']}")
+                
+                # Record trade details for verification
+                trade_details = position.get_trade_details()
+                logger.info(f"Trade details: {trade_details}")
     
     def _update_market_states(self, 
                             current_data: Dict[str, pd.DataFrame],
@@ -739,47 +824,98 @@ class BacktestEngine:
             benchmark_data: Optional benchmark data for comparison
             
         Returns:
-            Dict with performance metrics
+            Dictionary of performance metrics
         """
-        # Prepare benchmark returns if available
-        benchmark_returns = None
-        if benchmark_data is not None:
-            benchmark_returns = benchmark_data['close'].pct_change().dropna()
+        from .performance_metrics import PerformanceMetrics
         
-        # Calculate metrics
-        metrics = PerformanceMetrics.calculate_metrics(
-            equity_curve=self.portfolio_manager.equity_history,
-            trades=self.portfolio_manager.trade_history,
-            risk_free_rate=0.0,  # Assume zero risk-free rate for simplicity
-            benchmark_returns=benchmark_returns
-        )
+        # Get portfolio statistics
+        portfolio_stats = self.portfolio_manager.get_portfolio_stats()
+        
+        # Validate equity history
+        if not self.portfolio_manager.equity_history:
+            logger.warning("Empty equity history, returning default metrics")
+            return {
+                "total_return": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "win_rate": 0.0,
+                "portfolio_stats": portfolio_stats
+            }
+            
+        # Check for extreme values in equity history
+        try:
+            equity_values = [float(entry["equity"]) for entry in self.portfolio_manager.equity_history]
+            max_equity = max(equity_values)
+            
+            # If we have extreme values, log warning and cap them
+            if max_equity > 1e12:  # More than a trillion
+                logger.warning(f"Extreme equity value detected: {max_equity}. Capping values.")
+                capped_equity_history = []
+                for entry in self.portfolio_manager.equity_history:
+                    capped_entry = entry.copy()
+                    if float(entry["equity"]) > 1e12:
+                        capped_entry["equity"] = Decimal("1000000000000")  # Cap at 1 trillion
+                    capped_equity_history.append(capped_entry)
+                equity_history = capped_equity_history
+            else:
+                equity_history = self.portfolio_manager.equity_history
+        except Exception as e:
+            logger.error(f"Error validating equity history: {str(e)}")
+            equity_history = self.portfolio_manager.equity_history
+        
+        # Calculate performance metrics with error handling
+        try:
+            metrics = PerformanceMetrics.calculate_metrics(
+                equity_history,
+                self.portfolio_manager.trade_history,
+                0.0,  # risk_free_rate
+                benchmark_data
+            )
+        except Exception as e:
+            logger.error(f"Error calculating performance metrics: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Return default metrics on error
+            metrics = {
+                "total_return": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "win_rate": 0.0
+            }
+        
+        # Combine metrics with portfolio stats
+        metrics.update({
+            "portfolio_stats": portfolio_stats
+        })
         
         return metrics
     
     def generate_report(self, 
-                      output_dir: Union[str, Path],
-                      report_name: str,
-                      formats: List[str] = ["html", "json", "csv"]) -> Dict[str, str]:
+                  output_dir: Union[str, Path],
+                  report_name: str,
+                  formats: List[str] = ["html", "json", "csv"]) -> Dict[str, str]:
         """
-        Generate a comprehensive performance report.
+        Generate a report for the backtest results.
         
         Args:
-            output_dir: Directory for report output
-            report_name: Name for the report
-            formats: List of formats to generate
+            output_dir: Output directory for the report
+            report_name: Name of the report
+            formats: List of formats to generate (html, json, csv)
             
         Returns:
-            Dict mapping format to report file path
+            Dictionary with report file paths
         """
         from .report_generator import ReportGenerator
         
         # Create report generator
-        report_generator = ReportGenerator(output_dir)
+        report_generator = ReportGenerator(output_dir=output_dir)
         
-        # Prepare results for report
+        # Prepare results
         results = {
             "strategy_name": "_".join(self.strategies.keys()),
-            "symbols": list(self.portfolio_manager.positions.keys()),
+            "symbols": self.symbols,
+            "timeframe": self.timeframe,
             "start_date": self.start_date,
             "end_date": self.end_date,
             "initial_capital": float(self.initial_capital),
@@ -792,12 +928,10 @@ class BacktestEngine:
         }
         
         # Generate report
-        report_paths = report_generator.generate_report(
+        report_files = report_generator.generate_report(
             backtest_results=results,
             report_name=report_name,
             formats=formats
         )
         
-        logger.info(f"Generated report in formats: {', '.join(formats)}")
-        
-        return report_paths 
+        return report_files 

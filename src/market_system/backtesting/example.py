@@ -35,7 +35,7 @@ def run_backtest():
     # Initialize components
     data_provider = DataProvider(str(data_dir))
     strategy = TrendFollowingStrategy(fast_period=20, slow_period=50)
-    portfolio_manager = PortfolioManager(initial_capital=Decimal("100000"))
+    portfolio_manager = PortfolioManager(initial_capital=Decimal("10000"))
     execution_handler = ExecutionHandler(
         slippage_model="percentage",
         slippage_params={"percentage": 0.001},
@@ -49,7 +49,7 @@ def run_backtest():
     
     # Create backtest engine
     engine = BacktestEngine(
-        initial_capital=Decimal("100000"),
+        initial_capital=Decimal("10000"),
         start_date=start_date,
         end_date=end_date,
         data_provider=data_provider,

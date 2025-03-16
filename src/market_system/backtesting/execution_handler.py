@@ -18,9 +18,9 @@ class ExecutionHandler:
     """
     
     def __init__(self, 
-                 slippage_model: str = "fixed",
+                 slippage_model: str = "percentage",
                  slippage_params: Optional[Dict] = None,
-                 commission_model: str = "fixed",
+                 commission_model: str = "percentage",
                  commission_params: Optional[Dict] = None):
         """
         Initialize the execution handler.
@@ -32,9 +32,11 @@ class ExecutionHandler:
             commission_params: Parameters for the commission model
         """
         self.slippage_model = slippage_model
-        self.slippage_params = slippage_params or {"fixed_pips": 1}
+        # More realistic slippage parameters
+        self.slippage_params = slippage_params or {"percentage": 0.001}  # 0.1% slippage by default
         self.commission_model = commission_model
-        self.commission_params = commission_params or {"fixed_amount": Decimal("0.0")}
+        # More realistic commission parameters
+        self.commission_params = commission_params or {"percentage": 0.001, "min_commission": Decimal("1.0")}  # 0.1% commission with $1 minimum
         
         logger.info(f"ExecutionHandler initialized with slippage model: {slippage_model}, commission model: {commission_model}")
         
@@ -181,8 +183,12 @@ class ExecutionHandler:
         elif self.commission_model == "percentage":
             # Percentage of trade value
             percentage = Decimal(str(self.commission_params.get("percentage", 0.001)))
+            min_commission = Decimal(str(self.commission_params.get("min_commission", 1.0)))
             trade_value = price * quantity
-            return trade_value * percentage
+            calculated_commission = trade_value * percentage
+            
+            # Apply minimum commission
+            return max(calculated_commission, min_commission)
             
         elif self.commission_model == "per_share":
             # Fixed amount per share/contract
