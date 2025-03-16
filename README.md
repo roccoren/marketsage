@@ -174,14 +174,29 @@ python market_backtest.py --all-symbols --market nasdaq --start-date 2023-01-01 
 
 The system comes with several built-in strategies:
 
-1. **Trend Following**: Based on moving average crossovers
+1. **Trend Following**: Based on moving average crossovers. Generates buy signals when the fast moving average crosses above the slow moving average, and sell signals when the fast moving average crosses below the slow moving average.
    ```bash
    python market_backtest.py --symbols 0700.HK --strategies trend_following --fast-period 20 --slow-period 50
    ```
 
-2. **Mean Reversion**: Based on RSI (Relative Strength Index)
+2. **Mean Reversion**: Based on RSI (Relative Strength Index). Generates buy signals when the RSI falls below the oversold threshold, and sell signals when the RSI rises above the overbought threshold.
    ```bash
    python market_backtest.py --symbols 0700.HK --strategies mean_reversion --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70
+   ```
+
+3. **Moving Average Crossover**: Identifies opportunities when a faster moving average crosses above a slower moving average, combined with volume and price-to-VWAP filters.
+   ```bash
+   python market_backtest.py --symbols 0700.HK --strategies moving_average_crossover
+   ```
+
+4. **Volatility Breakout**: Identifies breakout opportunities based on increased volatility and volume, targeting stocks that are breaking out of consolidation patterns.
+   ```bash
+   python market_backtest.py --symbols 0700.HK --strategies volatility_breakout
+   ```
+
+5. **Volume Spike**: Identifies trading opportunities based on significant increases in trading volume, which often precede price movements.
+   ```bash
+   python market_backtest.py --symbols 0700.HK --strategies volume_spike
    ```
 
 ### Adding Custom Strategies
