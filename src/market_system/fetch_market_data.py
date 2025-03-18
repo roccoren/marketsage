@@ -1,4 +1,6 @@
-"""Standalone market data fetcher with async processing and rate limiting."""
+"""Standalone market data fetcher with async processing and rate limiting.
+Includes market cap and fundamental data (sector, industry, company name, etc.) in the saved JSON files.
+"""
 import asyncio
 import argparse
 from datetime import datetime, timedelta
@@ -109,7 +111,7 @@ async def fetch_data(args):
 
 def main():
     """CLI entry point for market data fetcher."""
-    parser = argparse.ArgumentParser(description="Fetch market data with enhanced features")
+    parser = argparse.ArgumentParser(description="Fetch market data with enhanced features including market cap and fundamental data")
     
     # Market selection
     parser.add_argument('-m', '--market', type=str,

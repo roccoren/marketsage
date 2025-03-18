@@ -64,7 +64,7 @@ def initialize_components(symbol, start_date, end_date, initial_capital=10000,
                           stop_loss=0.05, take_profit=0.1, position_size=0.1,
                           slippage_model='percentage', slippage_value=0.001,
                           commission_model='percentage', commission_value=0.001,
-                          market='hkex'):
+                          market='custom'):
     """
     Initialize backtest components for a symbol
     
@@ -92,8 +92,11 @@ def initialize_components(symbol, start_date, end_date, initial_capital=10000,
     Returns:
         Tuple of (data_provider, backtest_engine)
     """
-    # Initialize data provider
-    data_provider = DataProvider(base_path='data')
+    # Initialize data provider with market-specific base path
+    # For custom market, use data directory directly
+    # For other markets, use market-specific directory
+    base_path = 'data' if market == 'custom' else f'data/{market}'
+    data_provider = DataProvider(base_path=base_path)
     
     # Initialize strategies if not provided
     if strategies is None:
@@ -137,7 +140,7 @@ def run_backtest_for_symbol(symbol, start_date, end_date, timeframe='1d',
                            stop_loss=0.05, take_profit=0.1, position_size=0.1,
                            slippage_model='percentage', slippage_value=0.001,
                            commission_model='percentage', commission_value=0.001,
-                           market='hkex'):
+                           market='custom'):
     """
     Run backtest for a single symbol
     
@@ -186,10 +189,25 @@ def run_backtest_for_symbol(symbol, start_date, end_date, timeframe='1d',
         
         # Run backtest
         start_time = time.time()
-        print(f"Starting backtest for 1 symbols with timeframe {timeframe}")
+        print(f"Starting backtest for symbol {symbol} with timeframe {timeframe}")
         
         try:
             backtest_results = backtest_engine.run([symbol], data_provider, timeframe, market=market)
+            
+            # Check if backtest failed
+            if backtest_results.get('error'):
+                logger.error(f"Backtest failed for {symbol}: {backtest_results['error']}")
+                return {
+                    'symbol': symbol,
+                    'error': backtest_results['error']
+                }
+            
+            if not backtest_results or not backtest_results.get('portfolio_value'):
+                logger.error(f"No valid backtest results for symbol {symbol}")
+                return {
+                    'symbol': symbol,
+                    'error': 'No valid backtest results'
+                }
             
             # Calculate execution time
             execution_time = time.time() - start_time
@@ -230,42 +248,29 @@ def run_backtest_for_symbol(symbol, start_date, end_date, timeframe='1d',
                 print(f"Generated reports for {report_name} in formats: html, json, csv")
                 print(f"Generated report in formats: html, json, csv")
             
-            # Return results
+            # Return results with validation
+            metrics = backtest_results.get('metrics', {})
             return {
                 'symbol': symbol,
-                'total_return': total_return,
-                'sharpe_ratio': backtest_results.get('metrics', {}).get('sharpe_ratio', 0),
-                'max_drawdown': backtest_results.get('metrics', {}).get('max_drawdown', 0),
-                'win_rate': backtest_results.get('metrics', {}).get('win_rate', 0),
-                'total_trades': len(backtest_results.get('trades', [])),
-                'final_equity': final_equity,
+                'total_return': total_return if total_return != 0 else None,
+                'sharpe_ratio': metrics.get('sharpe_ratio') if metrics.get('sharpe_ratio', 0) != 0 else None,
+                'max_drawdown': metrics.get('max_drawdown') if metrics.get('max_drawdown', 0) != 0 else None,
+                'win_rate': metrics.get('win_rate') if metrics.get('win_rate', 0) != 0 else None,
+                'total_trades': len(backtest_results.get('trades', [])) if backtest_results.get('trades') else None,
+                'final_equity': final_equity if final_equity != initial_capital else None,
                 'report_path': report_path if generate_reports else ""
             }
         except Exception as e:
-            print(f"Error in backtest execution: {str(e)}")
-            # Return default results
+            logger.error(f"Error in backtest execution for symbol {symbol}: {str(e)}")
             return {
                 'symbol': symbol,
-                'total_return': 0,
-                'sharpe_ratio': 0,
-                'max_drawdown': 0,
-                'win_rate': 0,
-                'total_trades': 0,
-                'final_equity': initial_capital,
-                'report_path': "",
                 'error': str(e)
             }
+            
     except Exception as e:
-        print(f"Error running backtest for {symbol}: {str(e)}")
+        logger.error(f"Failed to run backtest for symbol {symbol}: {str(e)}")
         return {
             'symbol': symbol,
-            'total_return': 0,
-            'sharpe_ratio': 0,
-            'max_drawdown': 0,
-            'win_rate': 0,
-            'total_trades': 0,
-            'final_equity': initial_capital,
-            'report_path': "",
             'error': str(e)
         }
 
@@ -570,7 +575,7 @@ def run_market_backtest(symbols, start_date, end_date, timeframe='1d',
                        stop_loss=0.05, take_profit=0.1, position_size=0.1,
                        slippage_model='percentage', slippage_value=0.001,
                        commission_model='percentage', commission_value=0.001,
-                       initial_capital=100000, market='hkex'):
+                       initial_capital=100000, market='custom'):
     """
     Run market-wide backtest
     
@@ -607,7 +612,10 @@ def run_market_backtest(symbols, start_date, end_date, timeframe='1d',
     # Create data provider if sharing
     data_provider = None
     if share_data_provider:
-        data_provider = True  # Flag to create shared data provider
+        # For custom market, use data directory directly
+        # For other markets, use market-specific directory
+        base_path = 'data' if market == 'custom' else f'data/{market}'
+        data_provider = DataProvider(base_path=base_path)
     
     # Run backtest based on execution mode
     start_time = time.time()
@@ -675,7 +683,7 @@ def run_market_backtest(symbols, start_date, end_date, timeframe='1d',
     
     return results
 
-def generate_summary_report(results, start_date, end_date, market='hkex'):
+def generate_summary_report(results, start_date, end_date, market='custom'):
     """
     Generate summary report for all backtests
     
@@ -696,19 +704,27 @@ def generate_summary_report(results, start_date, end_date, market='hkex'):
     # Create summary path
     summary_path = Path(f"reports/backtest/{market}_market/{market}_summary_{start_date_str}_{end_date_str}.csv")
     
-    # Filter out results with errors that would make them invalid
+    # Filter out None results and invalid results
     valid_results = []
     for r in results:
+        if r is None:
+            logger.warning("Skipping None result")
+            continue
+            
         # Only filter out results if they have an error AND don't have required fields
-        if "error" in r and (
-            'symbol' not in r or 
-            'total_return' not in r or 
-            'sharpe_ratio' not in r or 
-            'max_drawdown' not in r
-        ):
-            logger.warning(f"Filtering out invalid result for symbol {r.get('symbol', 'unknown')}: {r.get('error', 'unknown error')}")
+        if isinstance(r, dict):
+            if "error" in r and (
+                'symbol' not in r or 
+                'total_return' not in r or 
+                'sharpe_ratio' not in r or 
+                'max_drawdown' not in r or
+                'final_equity' not in r
+            ):
+                logger.warning(f"Filtering out invalid result for symbol {r.get('symbol', 'unknown')}: {r.get('error', 'unknown error')}")
+            else:
+                valid_results.append(r)
         else:
-            valid_results.append(r)
+            logger.warning(f"Skipping non-dict result: {type(r)}")
     
     logger.info(f"Found {len(valid_results)} valid results out of {len(results)} total results")
     
@@ -883,7 +899,8 @@ def main():
         symbols = args.symbols
     elif args.symbol_file:
         with open(args.symbol_file, 'r') as f:
-            symbols = [line.strip() for line in f.readlines()]
+            symbols = [line.strip() for line in f.readlines() if line.strip()]
+        logger.info(f"Loaded {len(symbols)} symbols from file")
     elif args.all_symbols:
         data_dir = Path('data')
         symbols = get_market_symbols(data_dir, args.market)
@@ -898,41 +915,66 @@ def main():
         elif args.market == 'asx':
             symbols = ['BHP.AX', 'CBA.AX', 'NAB.AX', 'CSL.AX', 'WBC.AX']
     
+    # Validate symbols
+    if not symbols:
+        logger.error("No symbols provided for backtesting")
+        sys.exit(1)
+    
+    logger.info(f"Starting backtest for {len(symbols)} symbols: {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
+    
     # Auto-detect concurrent tasks
     if args.max_concurrent is None and args.execution_mode == 'async':
         args.max_concurrent = multiprocessing.cpu_count() * 2
-        print(f"Auto-detected {args.max_concurrent} concurrent tasks")
+        logger.info(f"Auto-detected {args.max_concurrent} concurrent tasks")
     
     # Run market backtest
-    run_market_backtest(
-        symbols=symbols,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        timeframe=args.timeframe,
-        execution_mode=args.execution_mode,
-        workers=args.workers,
-        max_concurrent=args.max_concurrent,
-        show_progress=args.show_progress,
-        generate_reports=args.generate_reports,
-        share_data_provider=args.share_data_provider,
-        strategies=args.strategies,
-        fast_period=args.fast_period,
-        slow_period=args.slow_period,
-        rsi_period=args.rsi_period,
-        oversold_threshold=args.oversold_threshold,
-        overbought_threshold=args.overbought_threshold,
-        stop_loss=args.stop_loss,
-        take_profit=args.take_profit,
-        position_size=args.position_size,
-        slippage_model=args.slippage_model,
-        slippage_value=args.slippage_value,
-        commission_model=args.commission_model,
-        commission_value=args.commission_value,
-        initial_capital=args.initial_capital,
-        market=args.market
-    )
+    try:
+        results = run_market_backtest(
+            symbols=symbols,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            timeframe=args.timeframe,
+            execution_mode=args.execution_mode,
+            workers=args.workers,
+            max_concurrent=args.max_concurrent,
+            show_progress=args.show_progress,
+            generate_reports=args.generate_reports,
+            share_data_provider=args.share_data_provider,
+            strategies=args.strategies,
+            fast_period=args.fast_period,
+            slow_period=args.slow_period,
+            rsi_period=args.rsi_period,
+            oversold_threshold=args.oversold_threshold,
+            overbought_threshold=args.overbought_threshold,
+            stop_loss=args.stop_loss,
+            take_profit=args.take_profit,
+            position_size=args.position_size,
+            slippage_model=args.slippage_model,
+            slippage_value=args.slippage_value,
+            commission_model=args.commission_model,
+            commission_value=args.commission_value,
+            initial_capital=args.initial_capital,
+            market=args.market
+        )
+        
+        # Print summary of results
+        valid_results = [r for r in results if r is not None]
+        logger.info(f"Completed backtest with {len(valid_results)} valid results out of {len(symbols)} symbols")
+        
+        if valid_results:
+            avg_return = sum(r.get('total_return', 0) for r in valid_results) / len(valid_results)
+            logger.info(f"Average return: {avg_return:.2%}")
+            
+            profitable_symbols = sum(1 for r in valid_results if r.get('total_return', 0) > 0)
+            logger.info(f"Profitable symbols: {profitable_symbols}/{len(valid_results)} ({profitable_symbols/len(valid_results)*100:.1f}%)")
+        
+    except Exception as e:
+        logger.error(f"Error during backtest execution: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        sys.exit(1)
     
-    print(f"Market backtest completed for {len(symbols)} symbols")
+    logger.info(f"Market backtest completed for {len(symbols)} symbols")
 
 if __name__ == "__main__":
     main() 

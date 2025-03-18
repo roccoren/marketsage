@@ -37,7 +37,7 @@ class DataProvider:
                  start_date: datetime, 
                  end_date: datetime,
                  timeframe: str = "1d",
-                 market: str = "nasdaq") -> Dict[str, pd.DataFrame]:
+                 market: str = "custom") -> Dict[str, pd.DataFrame]:
         """
         Get historical market data for the specified symbols and date range.
         
@@ -46,7 +46,7 @@ class DataProvider:
             start_date: Start date for data retrieval
             end_date: End date for data retrieval
             timeframe: Data timeframe (e.g., "1d", "1h", "15m")
-            market: Market name (e.g., "nasdaq", "nyse")
+            market: Market name (e.g., "nasdaq", "nyse", "custom")
             
         Returns:
             Dict mapping symbols to DataFrames with OHLCV data
@@ -61,6 +61,7 @@ class DataProvider:
                 # Filter by date range
                 mask = (df.index >= start_date) & (df.index <= end_date)
                 result[symbol] = df.loc[mask].copy()
+                logger.info(f"Using cached data for {symbol}: {len(result[symbol])} rows")
                 continue
                 
             # Get all data files for this symbol within the date range
@@ -68,7 +69,17 @@ class DataProvider:
             
             if not data_files:
                 logger.warning(f"No data files found for {symbol} in market {market} between {start_date.date()} and {end_date.date()}")
-                continue
+                # Try to load from a single file for custom symbols
+                if market == "custom":
+                    custom_file = self.base_path / f"{symbol}.csv"
+                    if custom_file.exists():
+                        logger.info(f"Found custom data file for {symbol}: {custom_file}")
+                        data_files = [custom_file]
+                    else:
+                        logger.error(f"No data file found for custom symbol {symbol}")
+                        continue
+                else:
+                    continue
                 
             try:
                 # Load and combine data from all files
@@ -103,6 +114,7 @@ class DataProvider:
                 # Return the filtered dataset
                 mask = (df.index >= start_date) & (df.index <= end_date)
                 result[symbol] = df.loc[mask].copy()
+                logger.info(f"Loaded {len(result[symbol])} rows of data for {symbol}")
                 
             except Exception as e:
                 logger.error(f"Error loading data for {symbol}: {str(e)}")

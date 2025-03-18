@@ -24,6 +24,7 @@ class EnhancedMarketFetcher:
     - Organized data storage with market-specific directories
     - Retry mechanisms with exponential backoff
     - Enhanced error handling and monitoring
+    - Combined OHLCV and fundamental data fetching
     """
     
     def __init__(
@@ -61,6 +62,9 @@ class EnhancedMarketFetcher:
         self.cache_dir = self.data_dir / ".provider_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         yf.set_tz_cache_location(str(self.cache_dir))
+        
+        # Cache for Ticker objects
+        self._ticker_cache = {}
     async def _exponential_backoff(self, attempt: int) -> None:
         """Implement exponential backoff for retries."""
         delay = self.retry_delay * (2 ** (attempt - 1))
@@ -242,6 +246,11 @@ class EnhancedMarketFetcher:
             symbol_data = df[symbol]
             market_path = self._get_market_data_path(market, symbol)
             market_path.mkdir(parents=True, exist_ok=True)
+            
+            # Fetch ticker info (includes market cap and other fundamentals)
+            ticker_info = await self._get_ticker_info(symbol)
+            market_cap = ticker_info.get('marketCap', None)
+            
             for date, row in symbol_data.iterrows():
                 if any(pd.isna(row[col]) for col in ['Open', 'High', 'Low', 'Close', 'Volume']):
                     continue
@@ -255,13 +264,44 @@ class EnhancedMarketFetcher:
                     "adjusted_close": float(row['Close']),
                     "date": date.strftime('%Y-%m-%d'),
                     "market": market,
-                    "symbol": symbol
+                    "symbol": symbol,
+                    "market_cap": market_cap
                 }
+                
+                # Add additional fundamental data if available
+                for key in ['sector', 'industry', 'fullTimeEmployees', 'longName', 'shortName']:
+                    if key in ticker_info:
+                        data[key] = ticker_info[key]
                 
                 await self.cache.set(market, symbol, date.to_pydatetime(), data)
                 
         except Exception as e:
             logger.error(f"Error processing data for {symbol}: {str(e)}")
+    async def _get_ticker(self, symbol: str) -> yf.Ticker:
+        """Get or create a cached Ticker object."""
+        if symbol not in self._ticker_cache:
+            loop = asyncio.get_running_loop()
+            
+            def create_ticker():
+                return yf.Ticker(symbol)
+            
+            self._ticker_cache[symbol] = await loop.run_in_executor(self.thread_pool, create_ticker)
+        
+        return self._ticker_cache[symbol]
+    async def _get_ticker_info(self, symbol: str) -> Dict:
+        """Fetch ticker info with caching."""
+        ticker = await self._get_ticker(symbol)
+        
+        loop = asyncio.get_running_loop()
+        
+        def get_info():
+            return ticker.info
+        
+        try:
+            return await loop.run_in_executor(self.thread_pool, get_info)
+        except Exception as e:
+            logger.warning(f"Error fetching info for {symbol}: {str(e)}")
+            return {}
     async def get_market_data(
         self,
         market: str,
@@ -289,6 +329,11 @@ class EnhancedMarketFetcher:
                 symbol_data = df[symbol]
                 if not symbol_data.empty:
                     row = symbol_data.iloc[0]
+                    
+                    # Fetch ticker info (includes market cap and other fundamentals)
+                    ticker_info = await self._get_ticker_info(symbol)
+                    market_cap = ticker_info.get('marketCap', None)
+                    
                     data = {
                         "open": float(row['Open']),
                         "high": float(row['High']),
@@ -298,8 +343,14 @@ class EnhancedMarketFetcher:
                         "adjusted_close": float(row['Close']),
                         "date": date.strftime('%Y-%m-%d'),
                         "market": market,
-                        "symbol": symbol
+                        "symbol": symbol,
+                        "market_cap": market_cap
                     }
+                    
+                    # Add additional fundamental data if available
+                    for key in ['sector', 'industry', 'fullTimeEmployees', 'longName', 'shortName']:
+                        if key in ticker_info:
+                            data[key] = ticker_info[key]
                     
                     await self.cache.set(market, symbol, date, data)
                     return data

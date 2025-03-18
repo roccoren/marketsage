@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Union
 import pandas as pd
 from jsonschema import validate, ValidationError
 
+from .core.base_processor import BaseProcessor, MarketDataError
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -34,11 +36,7 @@ MARKET_DATA_SCHEMA = {
     }
 }
 
-class MarketDataError(Exception):
-    """Custom exception for market data processing errors."""
-    pass
-
-class MarketDataProcessor:
+class MarketDataProcessor(BaseProcessor):
     """
     Processes market system data from JSON files.
     
@@ -46,16 +44,96 @@ class MarketDataProcessor:
     with proper error handling and data integrity checks.
     """
     
-    def __init__(self, base_path: Union[str, Path]):
+    def process_market_data(self, market_name: str) -> pd.DataFrame:
         """
-        Initialize the MarketDataProcessor.
+        Process all market data for a specific market.
         
         Args:
-            base_path: Base directory containing market data folders
+            market_name: Name of the market
+            
+        Returns:
+            pd.DataFrame: Processed market data
         """
-        self.base_path = Path(base_path)
-        if not self.base_path.exists():
-            raise MarketDataError(f"Base path does not exist: {self.base_path}")
+        market_dir = self.base_path / market_name
+        if not market_dir.exists():
+            raise MarketDataError(f"Market directory does not exist: {market_dir}")
+        
+        all_data = []
+        
+        symbols = self.get_market_symbols(market_name)
+        
+        for symbol in symbols:
+            symbol_dir = market_dir / symbol
+            if not symbol_dir.is_dir():
+                continue
+                
+            for file_path in symbol_dir.glob('*.json'):
+                try:
+                    data = self.validate_json_file(file_path)
+                    
+                    # Add symbol if not present
+                    if 'symbol' not in data:
+                        data['symbol'] = symbol
+                    
+                    # Add market if not present
+                    if 'market' not in data:
+                        data['market'] = market_name
+                    
+                    # Normalize date
+                    data['date'] = self.normalize_date(data['date'])
+                    
+                    all_data.append(data)
+                except MarketDataError as e:
+                    logger.warning(f"Skipping file {file_path}: {e}")
+        
+        if not all_data:
+            raise MarketDataError(f"No valid data found for market: {market_name}")
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(all_data)
+        
+        # Convert date to datetime
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # Set index
+        df.set_index(['date', 'symbol'], inplace=True)
+        
+        # Sort by date and symbol
+        df.sort_index(inplace=True)
+        
+        return df
+    
+    def get_market_summary(self, market_name: str) -> Dict:
+        """
+        Get summary statistics for a market.
+        
+        Args:
+            market_name: Name of the market
+            
+        Returns:
+            Dict: Summary statistics
+        """
+        try:
+            df = self.process_market_data(market_name)
+            
+            summary = {
+                'market': market_name,
+                'symbols': df.index.get_level_values('symbol').nunique(),
+                'days': df.index.get_level_values('date').nunique(),
+                'start_date': df.index.get_level_values('date').min().strftime('%Y-%m-%d'),
+                'end_date': df.index.get_level_values('date').max().strftime('%Y-%m-%d'),
+                'avg_price': df['close'].mean(),
+                'avg_volume': df['volume'].mean(),
+                'total_records': len(df)
+            }
+            
+            return summary
+        except Exception as e:
+            logger.error(f"Error getting market summary: {e}")
+            return {
+                'market': market_name,
+                'error': str(e)
+            }
 
     def validate_json_file(self, file_path: Path) -> Dict:
         """
@@ -81,105 +159,3 @@ class MarketDataProcessor:
             raise MarketDataError(f"Schema validation failed for {file_path}: {str(e)}")
         except Exception as e:
             raise MarketDataError(f"Error processing {file_path}: {str(e)}")
-
-    def process_market_data(self, market_name: str) -> pd.DataFrame:
-        """
-        Process all JSON files for a specific market.
-        
-        Args:
-            market_name: Name of the market to process
-            
-        Returns:
-            pd.DataFrame: Processed market data
-            
-        Raises:
-            MarketDataError: If processing fails
-        """
-        market_path = self.base_path / market_name
-        if not market_path.exists():
-            raise MarketDataError(f"Market directory not found: {market_path}")
-
-        # Get all JSON files for the market
-        json_files = list(market_path.glob("*.json"))
-        if not json_files:
-            raise MarketDataError(f"No JSON files found in {market_path}")
-
-        # Process each file and combine data
-        dfs = []
-        for file_path in json_files:
-            try:
-                logger.info(f"Processing file: {file_path}")
-                json_data = self.validate_json_file(file_path)
-                
-                # Convert JSON data to DataFrame
-                df = pd.DataFrame(json_data["data"])
-                df["market_name"] = json_data["market_name"]
-                df["source_file"] = file_path.name
-                
-                # Convert timestamp to datetime
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
-                
-                # Handle additional metrics if present
-                if "additional_metrics" in df.columns:
-                    metrics_df = pd.json_normalize(df["additional_metrics"])
-                    df = pd.concat([df.drop("additional_metrics", axis=1), metrics_df], axis=1)
-                
-                dfs.append(df)
-                
-            except Exception as e:
-                logger.error(f"Error processing {file_path}: {str(e)}")
-                raise MarketDataError(f"Failed to process {file_path}: {str(e)}")
-
-        # Combine all DataFrames
-        if not dfs:
-            raise MarketDataError(f"No valid data found for market: {market_name}")
-            
-        combined_df = pd.concat(dfs, ignore_index=True)
-        
-        # Sort by timestamp and remove duplicates
-        combined_df = (combined_df
-                      .sort_values("timestamp")
-                      .drop_duplicates(subset=["timestamp", "market_name"], keep="last")
-                      .reset_index(drop=True))
-        
-        logger.info(f"Successfully processed {len(json_files)} files for {market_name}")
-        return combined_df
-
-    def get_market_summary(self, market_name: str) -> Dict:
-        """
-        Generate summary statistics for a market's data.
-        
-        Args:
-            market_name: Name of the market to summarize
-            
-        Returns:
-            Dict: Summary statistics
-        """
-        try:
-            df = self.process_market_data(market_name)
-            
-            summary = {
-                "market_name": market_name,
-                "data_points": len(df),
-                "date_range": {
-                    "start": df["timestamp"].min().isoformat(),
-                    "end": df["timestamp"].max().isoformat()
-                },
-                "price_metrics": {
-                    "mean": df["price"].mean(),
-                    "median": df["price"].median(),
-                    "min": df["price"].min(),
-                    "max": df["price"].max()
-                },
-                "volume_metrics": {
-                    "total": df["volume"].sum(),
-                    "mean": df["volume"].mean(),
-                    "median": df["volume"].median()
-                }
-            }
-            
-            return summary
-            
-        except Exception as e:
-            logger.error(f"Error generating summary for {market_name}: {str(e)}")
-            raise MarketDataError(f"Failed to generate summary for {market_name}: {str(e)}")

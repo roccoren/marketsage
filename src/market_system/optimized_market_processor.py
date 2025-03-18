@@ -23,15 +23,13 @@ from jsonschema import validate, ValidationError
 import concurrent.futures
 from functools import partial
 import time
-import psutil
 import os
 from datetime import datetime
 
+from .core.base_processor import BaseProcessor, MarketDataError
+from .core.utils import ProcessingStats, check_memory_usage, log_system_stats, chunked_dataframe
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 # Constants for optimization
@@ -52,385 +50,289 @@ class PerformanceMetrics:
     
     def record_memory(self):
         """Record current memory usage."""
-        process = psutil.Process(os.getpid())
-        self.metrics['memory_usage'].append(process.memory_info().rss / 1024 / 1024)  # MB
+        memory_info = log_system_stats()
+        self.metrics['memory_usage'].append(memory_info['memory_used_percent'])
     
     def get_summary(self) -> Dict:
         """Get performance metrics summary."""
-        memory_stats = (
-            {'peak_memory_mb': round(max(self.metrics['memory_usage']), 2),
-             'avg_memory_mb': round(np.mean(self.metrics['memory_usage']), 2)}
-            if self.metrics['memory_usage']
-            else {'peak_memory_mb': 0, 'avg_memory_mb': 0}
-        )
-        
-        total_time = self.metrics['file_read_time'] + self.metrics['processing_time']
-        rps = (round(self.metrics['total_records'] / total_time, 2)
-               if total_time > 0 and self.metrics['total_records'] > 0
-               else 0)
-        
+        if not self.metrics['memory_usage']:
+            self.record_memory()
+            
         return {
-            'file_read_time_seconds': round(self.metrics['file_read_time'], 2),
-            'processing_time_seconds': round(self.metrics['processing_time'], 2),
-            **memory_stats,
-            'records_per_second': rps
+            'file_read_time_seconds': round(self.metrics['file_read_time'], 3),
+            'processing_time_seconds': round(self.metrics['processing_time'], 3),
+            'total_execution_time': round(self.metrics['file_read_time'] + self.metrics['processing_time'], 3),
+            'records_per_second': round(self.metrics['total_records'] / 
+                                      (self.metrics['processing_time'] + 0.001), 1),
+            'peak_memory_percent': round(max(self.metrics['memory_usage']), 1),
+            'avg_memory_percent': round(sum(self.metrics['memory_usage']) / len(self.metrics['memory_usage']), 1),
+            'total_records': self.metrics['total_records']
         }
 
-class OptimizedMarketProcessor:
+class OptimizedMarketProcessor(BaseProcessor):
     """
-    Optimized market data processor with performance monitoring.
+    Memory-optimized market data processor.
     
-    Implements:
-    - Chunked processing for memory efficiency
-    - Parallel processing for large datasets
+    Features:
+    - Memory-efficient processing through chunking
+    - Parallel processing for improved performance
     - Performance monitoring and benchmarking
-    - Memory usage optimization
     """
     
     def __init__(self, base_path: Union[str, Path]):
-        """Initialize processor with performance tracking."""
-        self.base_path = Path(base_path)
+        """Initialize the optimized processor."""
+        super().__init__(base_path)
         self.performance = PerformanceMetrics()
-        
+    
     def _check_memory_usage(self) -> bool:
         """
         Check if memory usage is below threshold.
         
         Returns:
-            bool: True if memory usage is acceptable
+            bool: True if memory usage is below threshold
         """
-        memory = psutil.virtual_memory()
-        return memory.percent / 100 < MEMORY_THRESHOLD
-    
-    def _read_json_chunk(self, file_path: Path, chunk_size: int) -> Generator[Dict, None, None]:
-        """
-        Read JSON file in chunks to optimize memory usage.
-        
-        Args:
-            file_path: Path to JSON file
-            chunk_size: Number of records per chunk
-            
-        Yields:
-            Dict: Chunk of JSON data
-        """
-        try:
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-                
-            # Extract symbol from path if not in data
-            if 'symbol' not in data:
-                data['symbol'] = file_path.parent.name
-                
-            # Extract market name from path if not in data
-            if 'market_name' not in data:
-                data['market_name'] = file_path.parent.parent.name
-                
-            # Transform single record into our internal format with new fields
-            record = {
-                'timestamp': data['date'],
-                'price': data['close'],
-                'volume': data['volume'],
-                'trading_status': data['trading_status'],
-                'currency': data['currency'],
-                'additional_metrics': {
-                    'open': data['open'],
-                    'high': data['high'],
-                    'low': data['low'],
-                    'adjusted_close': data['adjusted_close'],
-                    'vwap': data['metrics']['indicators']['vwap'],
-                    'turnover': data['metrics']['indicators']['turnover'],
-                    'daily_return': data['metrics']['returns']['daily'],
-                    'intraday_range': data['metrics']['returns']['intraday_range']
-                }
-            }
-            
-            chunk = {
-                'market_name': data['market'],  # Use market field from data
-                'symbol': data['symbol'],       # Use symbol field from data
-                'data': [record]  # Wrap in list to match expected format
-            }
-            yield chunk
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in {file_path}: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error reading {file_path}: {str(e)}")
-            raise
+        return check_memory_usage(MEMORY_THRESHOLD)
     
     def _process_chunk(self, chunk: Dict, file_name: str) -> pd.DataFrame:
         """
-        Process a single chunk of market data.
+        Process a chunk of market data.
         
         Args:
-            chunk: Dictionary containing market data chunk
-            file_name: Source file name for tracking
+            chunk: JSON data chunk
+            file_name: Source file name for reference
             
         Returns:
-            pd.DataFrame: Processed chunk data
+            pd.DataFrame: Processed data chunk
         """
-        # Create DataFrame with optimized dtypes
-        df = pd.DataFrame(chunk['data'])
-        df['market_name'] = chunk['market_name']
-        df['source_file'] = file_name
+        # Start timing
+        start_time = time.time()
         
-        # Convert timestamp to datetime using faster method
-        df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d')
-        
-        # Handle additional metrics with optimized data types
-        if 'additional_metrics' in df.columns:
-            metrics_df = pd.json_normalize(df['additional_metrics'])
+        try:
+            # Convert to DataFrame
+            if isinstance(chunk, dict):
+                # Single record
+                df = pd.DataFrame([chunk])
+            else:
+                # Multiple records
+                df = pd.DataFrame(chunk)
             
-            # Optimize numeric columns
-            float_cols = ['vwap', 'turnover', 'daily_return', 'intraday_range']
-            for col in float_cols:
-                metrics_df[col] = pd.to_numeric(metrics_df[col], downcast='float')
+            # Ensure required columns
+            required_columns = ['open', 'high', 'low', 'close', 'volume', 'adjusted_close', 'date', 'symbol', 'market']
+            missing_columns = [col for col in required_columns if col not in df.columns]
             
-            df = pd.concat([df.drop('additional_metrics', axis=1), metrics_df], axis=1)
+            # Extract metadata from file name if needed
+            if missing_columns and file_name:
+                parts = Path(file_name).stem.split('_')
+                if len(parts) >= 2:
+                    if 'market' not in df.columns:
+                        df['market'] = parts[0]
+                    if 'symbol' not in df.columns:
+                        df['symbol'] = parts[1]
+            
+            # Convert date column if present
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+            
+            # Track performance
+            self.performance.metrics['processing_time'] += time.time() - start_time
+            self.performance.metrics['total_records'] += len(df)
+            
+            return df
         
-        # Optimize categorical columns
-        categorical_cols = ['market_name', 'source_file', 'trading_status', 'currency']
-        for col in categorical_cols:
-            if col in df.columns:
-                df[col] = df[col].astype('category')
-        
-        # Validate trading status
-        valid_statuses = ['active', 'halted', 'suspended']
-        invalid_statuses = df[~df['trading_status'].isin(valid_statuses)]
-        if not invalid_statuses.empty:
-            logger.warning(f"Invalid trading statuses found: {invalid_statuses['trading_status'].unique()}")
-        
-        return df
+        except Exception as e:
+            logger.error(f"Error processing chunk: {e}")
+            # Return empty DataFrame with expected schema
+            return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume', 'adjusted_close', 
+                                        'date', 'symbol', 'market'])
     
     def process_file(self, file_path: Path) -> pd.DataFrame:
         """
-        Process a single market data file with optimization.
+        Process a single market data file.
         
         Args:
-            file_path: Path to market data file
+            file_path: Path to the market data file
+            
+        Returns:
+            pd.DataFrame: Processed data
+        """
+        # Start timing
+        start_time = time.time()
+        
+        try:
+            # Check memory usage
+            if not self._check_memory_usage():
+                logger.warning("Memory usage high, waiting before processing...")
+                time.sleep(1)  # Wait before continuing
+            
+            # Process file in chunks
+            all_data = []
+            for chunk in self._read_json_chunk(file_path, CHUNK_SIZE):
+                chunk_df = self._process_chunk(chunk, file_path.name)
+                all_data.append(chunk_df)
+            
+            # Combine chunks
+            if all_data:
+                df = pd.concat(all_data, ignore_index=True)
+            else:
+                df = pd.DataFrame()
+            
+            # Update metrics
+            self.performance.metrics['file_read_time'] += time.time() - start_time
+            
+            return df
+        
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {e}")
+            return pd.DataFrame()
+    
+    def process_market_data(self, market_name: str, parallel: bool = True, start_date: Optional[datetime] = None) -> pd.DataFrame:
+        """
+        Process all market data for a specific market with memory optimization.
+        
+        Args:
+            market_name: Name of the market
+            parallel: Whether to use parallel processing
+            start_date: Optional start date filter
             
         Returns:
             pd.DataFrame: Processed market data
         """
+        # Reset performance metrics
+        self.performance = PerformanceMetrics()
+        
+        # Start timing
         start_time = time.time()
-        chunks = []
+        self.performance.record_memory()
         
-        for chunk in self._read_json_chunk(file_path, CHUNK_SIZE):
-            if not self._check_memory_usage():
-                logger.warning("Memory usage high, waiting for cleanup...")
-                time.sleep(1)  # Allow garbage collection
-                
-            df_chunk = self._process_chunk(chunk, file_path.name)
-            chunks.append(df_chunk)
-            
-            self.performance.record_memory()
+        market_dir = self.base_path / market_name
+        if not market_dir.exists():
+            raise MarketDataError(f"Market directory does not exist: {market_dir}")
         
-        combined_df = pd.concat(chunks, ignore_index=True)
-        self.performance.metrics['file_read_time'] += time.time() - start_time
-        
-        return combined_df
-    
-    def process_market_data(self, market_name: str, parallel: bool = True, start_date: Optional[datetime] = None) -> pd.DataFrame:
-        """
-        Process market data with optimized collective file handling and date filtering.
-        
-        Args:
-            market_name: Name of the market to process
-            parallel: Whether to use parallel processing
-            start_date: Optional start date for filtering data
-            
-        Returns:
-            pd.DataFrame: Processed market data for all symbols
-        """
-        market_path = self.base_path / market_name
-        if not market_path.exists():
-            raise ValueError(f"Market directory not found: {market_path}")
-        
-        # Get all symbol directories
-        symbol_dirs = [d for d in market_path.iterdir() if d.is_dir()]
-        if not symbol_dirs:
-            raise ValueError(f"No symbol directories found in {market_path}")
-        
-        all_dfs = []
-        
+        # Define processing function for symbols
         def process_symbol_files(symbol_dir: Path) -> pd.DataFrame:
-            symbol = symbol_dir.name
-            json_files = list(symbol_dir.glob("*.json"))
-            
-            if not json_files:
-                logger.warning(f"No JSON files found for symbol {symbol}")
-                return None
-            
-            # Filter files by date if start_date is provided
-            if start_date:
-                filtered_files = []
-                for file in json_files:
-                    try:
-                        file_date = datetime.strptime(file.stem, '%Y-%m-%d')
-                        if file_date >= start_date:
-                            filtered_files.append(file)
-                    except ValueError:
-                        logger.warning(f"Invalid date format in filename: {file}")
-                json_files = filtered_files
-            
-            if not json_files:
-                logger.warning(f"No files found after date filtering for symbol {symbol}")
-                return None
-            
-            # Sort files by date for proper sequential processing
-            json_files.sort()
-            
-            # Process all files for the symbol at once
-            combined_data = []
-            for file in json_files:
-                try:
-                    with open(file, 'r') as f:
-                        data = json.load(f)
-                        
-                        # Ensure required fields exist
-                        required_fields = ['date', 'close', 'volume']
-                        if not all(field in data for field in required_fields):
-                            logger.warning(f"Missing required fields in {file}: {[f for f in required_fields if f not in data]}")
-                            continue
-                        
-                        # Handle optional fields with defaults
-                        data.setdefault('trading_status', 'active')
-                        data.setdefault('currency', 'Unknown')
-                        
-                        # Ensure metrics structure exists
-                        if 'metrics' not in data:
-                            data['metrics'] = {'indicators': {}, 'returns': {}}
-                        if 'indicators' not in data['metrics']:
-                            data['metrics']['indicators'] = {}
-                        
-                        # Set default values for optional metrics
-                        data['metrics']['indicators'].setdefault('vwap', data['close'])  # Use close price as fallback
-                        data['metrics']['indicators'].setdefault('turnover', data['close'] * data['volume'])
-                        
-                        # Create flattened record with all required fields
-                        flattened_record = {
-                            'symbol': symbol,
-                            'market': market_name,
-                            'market_name': market_name,
-                            'date': data['date'],
-                            'close': data['close'],
-                            'volume': data['volume'],
-                            'trading_status': data['trading_status'],
-                            'currency': data['currency'],
-                            # Extract metrics with fallbacks
-                            'vwap': data['metrics']['indicators'].get('vwap', data['close']),
-                            'turnover': data['metrics']['indicators'].get('turnover', data['close'] * data['volume']),
-                            # Include any other metrics if available
-                            'daily_return': data['metrics'].get('returns', {}).get('daily'),
-                            'intraday_range': data['metrics'].get('returns', {}).get('intraday_range')
-                        }
-                        
-                        combined_data.append(flattened_record)
-                except Exception as e:
-                    logger.error(f"Error reading file {file}: {str(e)}")
-                    continue
-            
-            if not combined_data:
-                return None
-            
-            # Convert to DataFrame all at once
-            df = pd.DataFrame(combined_data)
-            
-            # Process the combined data with required columns
-            df['timestamp'] = pd.to_datetime(df['date'])
-            df['price'] = df['close']
-            df['symbol'] = df['symbol'].astype('category')
-            df['market_name'] = df['market_name'].astype('category')
-            
-            # Add optional categorical columns
-            for col in ['currency', 'trading_status']:
-                if col in df.columns:
-                    df[col] = df[col].astype('category')
-            
-            # Ensure required numeric columns exist and convert them
-            required_numeric = {
-                'price': df['close'],
-                'volume': df['volume'],
-                'vwap': df['vwap'],
-                'turnover': df['turnover']
-            }
-            
-            for col, data in required_numeric.items():
-                df[col] = pd.to_numeric(data, errors='coerce')
+            """Process all files for a symbol."""
+            if not symbol_dir.is_dir():
+                return pd.DataFrame()
                 
-            # Add optional numeric columns if they exist
-            optional_numeric = ['daily_return', 'intraday_range']
-            for col in optional_numeric:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            symbol_name = symbol_dir.name
+            symbol_dfs = []
             
-            return df
+            try:
+                for file_path in symbol_dir.glob('*.json'):
+                    file_df = self.process_file(file_path)
+                    
+                    # Add symbol if not present
+                    if 'symbol' not in file_df.columns:
+                        file_df['symbol'] = symbol_name
+                        
+                    # Add market if not present
+                    if 'market' not in file_df.columns:
+                        file_df['market'] = market_name
+                    
+                    # Filter by start date if specified
+                    if start_date and 'date' in file_df.columns:
+                        file_df = file_df[file_df['date'] >= start_date]
+                        
+                    symbol_dfs.append(file_df)
+                    
+                # Record memory usage periodically
+                self.performance.record_memory()
+                
+                if symbol_dfs:
+                    return pd.concat(symbol_dfs, ignore_index=True)
+                else:
+                    return pd.DataFrame()
+                    
+            except Exception as e:
+                logger.error(f"Error processing symbol {symbol_name}: {e}")
+                return pd.DataFrame()
         
-        # Process symbols in parallel if enabled
+        # Process all symbols for the market
+        symbols = self.get_market_symbols(market_name)
+        symbol_dirs = [market_dir / symbol for symbol in symbols]
+        all_data = []
+        
+        # Log the number of symbols
+        logger.info(f"Processing {len(symbol_dirs)} symbols for market {market_name}")
+        
         if parallel and len(symbol_dirs) > 1:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                symbol_dfs = list(executor.map(process_symbol_files, symbol_dirs))
+            # Use parallel processing for multiple symbols
+            with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                # Process symbols in parallel
+                results = list(executor.map(process_symbol_files, symbol_dirs))
+                all_data = [df for df in results if not df.empty]
         else:
-            symbol_dfs = [process_symbol_files(d) for d in symbol_dirs]
+            # Process sequentially
+            for symbol_dir in symbol_dirs:
+                symbol_df = process_symbol_files(symbol_dir)
+                if not symbol_df.empty:
+                    all_data.append(symbol_df)
         
-        start_time = time.time()
+        # Combine all symbol data
+        if not all_data:
+            raise MarketDataError(f"No valid data found for market: {market_name}")
+            
+        combined_df = pd.concat(all_data, ignore_index=True)
         
-        # Filter out None results and combine
-        all_dfs = [df for df in symbol_dfs if df is not None]
+        # Convert date to datetime if needed
+        if 'date' in combined_df.columns and not pd.api.types.is_datetime64_any_dtype(combined_df['date']):
+            combined_df['date'] = pd.to_datetime(combined_df['date'])
         
-        if not all_dfs:
-            raise ValueError(
-                f"No valid data found in {market_path}. "
-                f"Time range: {f'from {start_date}' if start_date else 'all available data'}"
-            )
-
-        # Combine all symbols and optimize final dataset
-        logger.info(f"Combining data from {len(all_dfs)} symbol(s)")
-        combined_df = pd.concat(all_dfs, ignore_index=True)
-
-        # Ensure market name is set
-        combined_df['market_name'] = market_name
-
-        # Verify required columns exist
-        required_cols = ['timestamp', 'symbol']
-        missing_cols = [col for col in required_cols if col not in combined_df.columns]
-        if missing_cols:
-            raise ValueError(f"Missing required columns: {missing_cols}")
-
-        # Sort and remove duplicates using available columns
-        combined_df = (combined_df
-                      .sort_values(['symbol', 'timestamp'])
-                      .drop_duplicates(subset=['timestamp', 'symbol'], keep='last')
-                      .reset_index(drop=True))
+        # Set index to date and symbol
+        if 'date' in combined_df.columns and 'symbol' in combined_df.columns:
+            combined_df = combined_df.set_index(['date', 'symbol']).sort_index()
         
+        # Record final memory and timing
+        self.performance.record_memory()
         self.performance.metrics['processing_time'] += time.time() - start_time
-        self.performance.metrics['total_records'] = len(combined_df)
         
         return combined_df
     
     def get_performance_metrics(self) -> Dict:
-        """Get current performance metrics."""
+        """Get processor performance metrics."""
         return self.performance.get_summary()
 
 def benchmark_processor(data_path: Path, market_name: str) -> Dict:
     """
-    Benchmark market data processing performance.
+    Benchmark the optimized processor against a market.
     
     Args:
-        data_path: Base path for market data
-        market_name: Name of market to benchmark
+        data_path: Path to market data
+        market_name: Name of the market to process
         
     Returns:
-        Dict: Performance metrics
+        Dict: Benchmark results
     """
     processor = OptimizedMarketProcessor(data_path)
     
-    # Run with and without parallel processing
+    # Process with and without parallelization
     results = {}
-    for parallel in [False, True]:
-        mode = 'parallel' if parallel else 'sequential'
-        df = processor.process_market_data(market_name, parallel=parallel)
-        results[mode] = processor.get_performance_metrics()
+    
+    # Parallel processing benchmark
+    start = time.time()
+    df_parallel = processor.process_market_data(market_name, parallel=True)
+    parallel_time = time.time() - start
+    results['parallel'] = {
+        'time_seconds': round(parallel_time, 3),
+        'record_count': len(df_parallel),
+        'performance_metrics': processor.get_performance_metrics()
+    }
+    
+    # Sequential processing benchmark
+    start = time.time()
+    df_sequential = processor.process_market_data(market_name, parallel=False)
+    sequential_time = time.time() - start
+    results['sequential'] = {
+        'time_seconds': round(sequential_time, 3),
+        'record_count': len(df_sequential),
+        'performance_metrics': processor.get_performance_metrics()
+    }
+    
+    # Calculate speedup
+    if sequential_time > 0:
+        results['speedup_factor'] = round(sequential_time / parallel_time, 2)
+    else:
+        results['speedup_factor'] = 1.0
     
     return results
 
@@ -445,7 +347,7 @@ df = processor.process_market_data('market_name', parallel=True)
 # Get performance metrics
 metrics = processor.get_performance_metrics()
 print(f"Processed {metrics['records_per_second']} records/second")
-print(f"Peak memory usage: {metrics['peak_memory_mb']}MB")
+print(f"Peak memory usage: {metrics['peak_memory_percent']}%")
 
 # Run benchmark
 results = benchmark_processor('/path/to/data', 'market_name')

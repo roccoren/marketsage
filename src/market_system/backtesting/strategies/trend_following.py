@@ -52,8 +52,8 @@ class TrendFollowingStrategy(BaseStrategy):
             Signal object if a trading opportunity is identified, None otherwise
         """
         # Check if we have enough data
-        if len(data) < 2:  # Only need 2 data points for testing
-            logger.debug(f"Not enough data for {self.name} strategy. Need at least 2 bars.")
+        if len(data) < self.slow_period:
+            logger.debug(f"Not enough data for {self.name} strategy. Need at least {self.slow_period} bars.")
             return None
         
         logger.info(f"Analyzing {len(data)} data points for {data[-1].symbol} at {data[-1].timestamp}")
@@ -61,23 +61,33 @@ class TrendFollowingStrategy(BaseStrategy):
         # Convert MarketData objects to DataFrame for easier analysis
         df = self._convert_to_dataframe(data)
         
-        # For testing purposes, generate signals based on simple price movement
-        current_price = float(data[-1].close_price)
-        previous_price = float(data[-2].close_price)
+        # Calculate moving averages
+        df['fast_ma'] = df['close'].rolling(window=self.fast_period).mean()
+        df['slow_ma'] = df['close'].rolling(window=self.slow_period).mean()
         
-        # Calculate price change
-        price_change = (current_price / previous_price - 1) * 100
+        # Get current and previous values
+        current_fast_ma = df['fast_ma'].iloc[-1]
+        current_slow_ma = df['slow_ma'].iloc[-1]
+        prev_fast_ma = df['fast_ma'].iloc[-2]
+        prev_slow_ma = df['slow_ma'].iloc[-2]
         
-        logger.info(f"Current price: {current_price}, Previous price: {previous_price}, Price change: {price_change}%")
+        # Calculate crossover
+        current_cross = current_fast_ma - current_slow_ma
+        prev_cross = prev_fast_ma - prev_slow_ma
+        
+        logger.info(f"Current MA values - Fast: {current_fast_ma:.2f}, Slow: {current_slow_ma:.2f}")
+        logger.info(f"Previous MA values - Fast: {prev_fast_ma:.2f}, Slow: {prev_slow_ma:.2f}")
         
         # Create indicators snapshot
         indicators_snapshot = {
-            'price_change': float(price_change)
+            'fast_ma': float(current_fast_ma),
+            'slow_ma': float(current_slow_ma),
+            'crossover': float(current_cross)
         }
         
-        # Generate BUY signal if price increased
-        if price_change > 0:
-            logger.info(f"BUY signal generated for {data[-1].symbol} at {data[-1].timestamp}")
+        # Generate BUY signal on bullish crossover
+        if current_cross > 0 and prev_cross <= 0:
+            logger.info(f"BUY signal generated for {data[-1].symbol} at {data[-1].timestamp} (Bullish crossover)")
             
             return Signal(
                 symbol=data[-1].symbol,
@@ -89,9 +99,9 @@ class TrendFollowingStrategy(BaseStrategy):
                 indicators_snapshot=indicators_snapshot
             )
         
-        # Generate SELL signal if price decreased
-        elif price_change < 0:
-            logger.info(f"SELL signal generated for {data[-1].symbol} at {data[-1].timestamp}")
+        # Generate SELL signal on bearish crossover
+        elif current_cross < 0 and prev_cross >= 0:
+            logger.info(f"SELL signal generated for {data[-1].symbol} at {data[-1].timestamp} (Bearish crossover)")
             
             return Signal(
                 symbol=data[-1].symbol,
