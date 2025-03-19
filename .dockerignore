@@ -1,47 +1,120 @@
 # Git
 .git
 .gitignore
+.github
 
 # Python
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
+__pycache__/
 *.py[cod]
 *$py.class
-.pytest_cache
-.coverage
-htmlcov/
-.tox/
-.nox/
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Virtual Environment
 venv/
-ENV/
 env/
-
-# Data and outputs (will be mounted as volumes)
-data/*
-output/*
-logs/*
-
-# Docker
-Dockerfile
-.dockerignore
-
-# Documentation
-docs/
-*.md
-
-# Test files
-test_*.py
+.venv/
+ENV/
+.env
+.conda/
 
 # IDE
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
 *.swp
 *.swo
 
-# Miscellaneous
+# Project specific
+data/*
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/features/.gitkeep
+!data/labels/.gitkeep
+!data/cache/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+output/*
+!output/.gitkeep
+
+# Cache files
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+yfinance.cache
+
+# Documentation
+docs/_build/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+notebooks/*
+!notebooks/.gitkeep
+
+# Migration scripts (one-time use)
+migrate_all.sh
+scripts/migrate_*.py
+stockscan_backup/
+
+# Distributions
+.Python
+env/
+build/
+develop-eggs/
+dist/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*,cover
+.hypothesis/
+
+# Temporary files
+*.bak
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Miniconda
+Miniconda*.sh

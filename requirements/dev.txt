@@ -1,0 +1,16 @@
+-r base.txt
+
+# Testing
+pytest>=6.0
+pytest-cov>=2.12.1
+pytest-mock>=3.6.1
+
+# Linting and formatting
+black>=21.5b2
+isort>=5.9.1
+flake8>=3.9.2
+mypy>=0.910
+
+# Documentation
+sphinx>=4.0.2
+sphinx-rtd-theme>=0.5.2

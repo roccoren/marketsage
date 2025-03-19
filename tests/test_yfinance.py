@@ -1,8 +1,9 @@
 import yfinance as yf
+
 from utils.yfinance_utils import get_cached_session
 
 # Test fetching data for AAPL and MSFT
-symbols = ['AAPL', 'MSFT']
+symbols = ["AAPL", "MSFT"]
 session = get_cached_session()
 
 for symbol in symbols:

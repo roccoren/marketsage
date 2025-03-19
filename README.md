@@ -1,209 +1,172 @@
-# Stock Scanner
+# StockScan
 
-A Python-based stock analysis system that supports multiple trading strategies and exchange data sources.
+StockScan is a stock analysis and backtesting system for developing, testing, and evaluating quantitative trading strategies. The project follows modular design principles, organized based on Qlib's best practices to improve code maintainability and scalability.
 
-## Project Structure
+## Features
+
+- **Data Management**: Support for multi-exchange data loading, processing, and storage
+- **Technical Indicators**: Rich technical analysis indicator calculation tools
+- **Strategy Development**: Flexible strategy development framework supporting various types of strategies
+- **Backtesting System**: Precise backtesting functionality to evaluate strategy performance
+- **Parameter Optimization**: Automatic optimization of strategy parameters to improve effectiveness
+- **Market Scanning**: Scan the market based on strategy signals to find trading opportunities
+- **Visualization**: Intuitive display of backtesting results and technical indicators
+
+## Directory Structure
 
 ```
 stockscan/
-├── config/           # Configuration files
-│   ├── config.json   # Main configuration
-│   └── requirements.txt
-├── data/            # Stock data storage
-├── dist/            # Build output directory
-├── docs/            # Documentation
-│   ├── plan.md
-│   └── strategy.md
-├── output/          # Analysis reports and results
-├── src/             # Source code
-│   ├── strategies/  # Trading strategies
-│   ├── utils/      # Utility functions
-│   ├── main.py     # Application entry point
-│   ├── scanner.py  # Core scanner implementation
-│   └── ...
-└── tests/           # Test files
+├── config/                       # Configuration files directory
+│   ├── default_config.yaml       # Default configuration
+│   ├── logging_config.yaml       # Logging configuration
+│   ├── exchanges/                # Exchange-specific configurations
+│   └── strategies/               # Strategy parameter configurations
+│
+├── data/                         # Data directory
+│   ├── raw/                      # Raw data
+│   ├── processed/                # Preprocessed data
+│   ├── features/                 # Feature data
+│   ├── labels/                   # Label data
+│   └── cache/                    # Cached data
+│
+├── stockscan/                    # Main code directory
+│   ├── core/                     # Core functionality
+│   │   ├── data/                 # Data processing core
+│   │   ├── market/               # Market related
+│   │   └── types/                # Type definitions
+│   ├── strategies/               # Strategy implementations
+│   │   ├── technical/            # Technical analysis strategies
+│   │   ├── statistical/          # Statistical strategies
+│   │   └── ml/                   # Machine learning strategies
+│   ├── models/                   # Machine learning models
+│   │   ├── linear/               # Linear models
+│   │   └── tree/                 # Tree models
+│   ├── utils/                    # Utility classes
+│   └── scanner/                  # Scanner related
+│
+├── scripts/                      # Utility scripts
+├── examples/                     # Example code
+├── tests/                        # Test code
+├── notebooks/                    # Jupyter notebooks
+├── docs/                         # Documentation
+├── output/                       # Output directory
+│
+├── requirements/                 # Dependency management
+├── .gitignore                    # Git ignore file
+├── README.md                     # Project description
+├── setup.py                      # Installation script
+└── run_backtest.py               # Main entry script
 ```
 
 ## Installation
 
-### Local Development
+### Prerequisites
 
-1. Clone the repository:
+- Python 3.8+
+- pip
+
+### Installation Steps
+
+1. Clone the repository
+
 ```bash
-git clone <repository-url>
+git clone https://github.com/yourusername/stockscan.git
 cd stockscan
 ```
 
-2. Create a virtual environment (optional but recommended):
+2. Install dependencies
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements/dev.txt  # Install development dependencies
 ```
 
-3. Install package in development mode:
+3. Development mode installation
+
 ```bash
-pip install -e .
-```
-
-This will install the package with all dependencies from `config/requirements.txt`.
-
-### Docker Installation
-
-1. Build the Docker image:
-```bash
-docker build -t stockscanpy .
-```
-
-2. Run with default settings:
-```bash
-docker run \
-  --name stockscan \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/output:/app/output" \
-  -v "$(pwd)/logs:/app/logs" \
-  stockscanpy
-```
-
-3. Run with specific trading strategies:
-```bash
-docker run \
-  --name stockscan \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/output:/app/output" \
-  -v "$(pwd)/logs:/app/logs" \
-  stockscanpy --strategies rsi_stoch,atr_ma
-```
-
-4. Run with specific exchanges:
-```bash
-docker run \
-  --name stockscan \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/output:/app/output" \
-  -v "$(pwd)/logs:/app/logs" \
-  stockscanpy --exchanges HKEX NYSE
-```
-
-The container uses volume mounts to persist:
-- `/app/data`: Stock data and cache
-- `/app/output`: Analysis reports and results
-- `/app/logs`: Application logs
-
-### Docker Environment Variables
-
-You can configure the following environment variables:
-```bash
-docker run \
-  --name stockscan \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/output:/app/output" \
-  -v "$(pwd)/logs:/app/logs" \
-  -e SCAN_DAYS=30 \
-  stockscanpy
-```
-
-Available environment variables:
-- `SCAN_DAYS`: Number of days of historical data to analyze (default: 60)
-- `DATA_DIR`: Override data directory location
-- `OUTPUT_DIR`: Override output directory location
-- `LOG_DIR`: Override logs directory location
-- `PYTHONUNBUFFERED`: Control Python output buffering
-- `PYTHONDONTWRITEBYTECODE`: Control Python bytecode generation
-
-### Docker Troubleshooting
-
-1. Permissions issues:
-```bash
-# Fix permission issues with mounted volumes
-sudo chown -R $USER:$USER data output logs
-```
-
-2. Clean restart:
-```bash
-# Remove existing container
-docker rm stockscan
-
-# Remove and rebuild image
-docker rmi stockscanpy
-docker build -t stockscanpy .
+pip install -e .  # Install in development mode
 ```
 
 ## Usage
 
-After installation, you can run the stock scanner in several ways:
-
-### As an installed package:
-```bash
-# From anywhere after installing the package
-stockscan --exchanges HKEX NYSE
-```
-
-### From source directory:
-```bash
-# From the project root directory
-python -m src.main --exchanges HKEX NYSE
-```
-
-### With specific strategies:
-```bash
-stockscan --strategies rsi_stoch,atr_ma,adx_macd_cci,obv
-```
-
-### Usage Examples
+### Data Download
 
 ```bash
-# Update single stock: 
-python -u src/update_stocks.py --incremental --symbol AAPL
-# Update HKEX stock:
-python -u src/update_stocks.py --incremental --symbol 0700.HK
-# Update ASX stock:
-python -u src/update_stocks.py --incremental --symbol BHP.AX
-# Batch update all:
-python -u src/update_stocks.py --incremental
+python scripts/download_data.py --exchange NYSE --symbols AAPL,MSFT,GOOGL --start-date 2020-01-01
 ```
 
-### Available Strategies
+### Run Backtesting
 
-- RSI/Stochastic (rsi_stoch)
-- ATR/Moving Average (atr_ma)
-- ADX/MACD/CCI (adx_macd_cci)
-- On-Balance Volume (obv)
-
-## Configuration
-
-The main configuration file is located at `config/config.json`. This file contains:
-- Data directory settings
-- Output directory configuration
-- Exchange configurations
-- Provider settings
-
-Example configuration:
-```json
-{
-  "data_directory": "data",
-  "output_directory": "output",
-  "exchanges": [
-    {"name": "HKEX"},
-    {"name": "NYSE"}
-  ]
-}
-```
-
-## Directory Details
-
-- `/config`: Contains configuration files for the application
-- `/data`: Stores downloaded stock data and intermediate processing files
-- `/dist`: Contains build artifacts and deployment files
-- `/docs`: Project documentation and technical specifications
-- `/output`: Analysis reports, trading signals, and program output
-- `/src`: Source code organized by module
-- `/tests`: Test files and test data
-
-## Development
-
-To run tests:
 ```bash
-python -m pytest tests/
+python run_backtest.py backtest --strategy macd --exchange NYSE --symbol AAPL
 ```
 
-The project uses a src-layout pattern for better package organization and distribution. All source code is under the `src/` directory, with proper package imports within the codebase.
+### Parameter Optimization
+
+```bash
+python run_backtest.py optimize --strategy macd --exchange NYSE --symbol AAPL
+```
+
+### Market Scanning
+
+```bash
+python run_backtest.py scan --strategy macd --exchange NYSE --date 2023-07-15
+```
+
+## Examples
+
+Example code is located in the `examples` directory:
+
+- `examples/backtest_examples/`: Backtesting examples
+- `examples/optimization_examples/`: Optimization examples
+- `examples/scanner_examples/`: Scanning examples
+
+## Documentation
+
+Detailed documentation is located in the `docs` directory:
+
+- `docs/getting_started.md`: Getting started guide
+- `docs/strategies.md`: Strategy development guide
+- `docs/backtesting.md`: Backtesting system description
+- `docs/api/`: API documentation
+
+## Development Guide
+
+### Adding New Strategies
+
+1. Create a new strategy class in `stockscan/strategies`, inheriting from the `Strategy` base class
+2. Implement the `analyze` method to generate trading signals
+3. Add strategy parameter configuration in `config/strategies/`
+
+### Running Tests
+
+```bash
+pytest tests/  # Run all tests
+pytest tests/unit/  # Run unit tests only
+```
+
+### Code Formatting
+
+```bash
+# Use automated script to format code
+python scripts/format_code.py
+```
+
+## Project Reorganization
+
+This project has recently undergone code restructuring, adopting a more modular and maintainable structure. If you are using an older version of the code, please use the migration script to update:
+
+```bash
+python scripts/migrate_code.py --backup
+```
+
+## Contribution Guidelines
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details

@@ -26,6 +26,7 @@ env/
 .venv/
 ENV/
 .env
+.conda/
 
 # VSCode
 .vscode/
@@ -34,11 +35,48 @@ ENV/
 
 # Project specific
 data/*
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/features/.gitkeep
+!data/labels/.gitkeep
+!data/cache/.gitkeep
+
 logs/*
+!logs/.gitkeep
+
 output/*
+!output/.gitkeep
+
+config/*
+!config/default_config.yaml
+!config/exchanges/.gitkeep
+!config/strategies/.gitkeep
+
+# Documentation
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Temporary files
+stockscan_backup/
+*_backup/
+*.bak
+*.tmp
+*.temp
 
 # Cache files
 yfinance.cache
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files
+.idea/
+*.sublime-*
+.project
+.pydevproject
 
 # macOS
 .DS_Store
@@ -46,3 +84,26 @@ yfinance.cache
 .LSOverride
 ._*
 *.log
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+notebooks/*
+!notebooks/.gitkeep
+
+# Migration scripts (one-time use)
+migrate_all.sh
+scripts/migrate_*.py
+
+# Large binary files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.jar
+*.exe
+*.bin
+*.pkl
+*.h5
+*.model
+*.joblib
+Miniconda*.sh

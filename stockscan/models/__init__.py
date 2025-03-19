@@ -1,0 +1,1 @@
+"""StockScan models module."""

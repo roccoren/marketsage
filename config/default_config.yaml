@@ -1,0 +1,20 @@
+data:
+  base_dir: data
+  default_exchange: NYSE
+  supported_exchanges:
+  - NYSE
+  - NASDAQ
+  - ASX
+  - HKEX
+backtest:
+  default_initial_capital: 100000.0
+  default_commission: 0.0
+  default_slippage: 0.0
+output:
+  base_dir: output
+  save_backtest_results: true
+  save_plots: true
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  config_file: config/logging_config.yaml

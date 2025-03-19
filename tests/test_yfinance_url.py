@@ -1,13 +1,16 @@
-import yfinance as yf
-import requests
 from functools import partial
+
+import requests
+import yfinance as yf
 
 # Store original get function
 original_get = requests.get
 
+
 def intercepted_get(url, *args, **kwargs):
     print(f"\nRequesting URL: {url}")
     return original_get(url, *args, **kwargs)
+
 
 # Monkey patch requests.get
 requests.get = intercepted_get
