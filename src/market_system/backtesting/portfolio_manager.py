@@ -157,9 +157,10 @@ class PortfolioManager:
         if action == "BUY":
             self.current_capital -= position_cost
         else:  # SELL (for short positions)
-            # For simplicity, we're not handling margin requirements for shorts
-            # In a real system, you'd reserve margin and handle it properly
-            self.current_capital += position_cost
+            # For short positions, we don't add the full position cost to capital
+            # Instead, we reserve a portion for margin (e.g., 50%)
+            margin_requirement = position_cost * Decimal("0.5")
+            self.current_capital -= margin_requirement
         
         # Store the position
         self.positions[position_id] = position
@@ -205,11 +206,16 @@ class PortfolioManager:
         # Close the position
         position.close(price, timestamp)
         
-        # Update capital
-        if position.action == "BUY":
-            self.current_capital += price * position.quantity
-        else:  # SELL (short position)
-            self.current_capital -= price * position.quantity
+        # Calculate P&L
+        pnl = position.pnl
+        
+        # Update capital based on P&L
+        self.current_capital += pnl
+        
+        # For short positions, return the margin requirement
+        if position.action == "SELL":
+            margin_requirement = position.entry_price * position.quantity * Decimal("0.5")
+            self.current_capital += margin_requirement
             
         # Move to closed positions
         del self.positions[position_id]
@@ -318,14 +324,14 @@ class PortfolioManager:
                 # If market_data is a Dict, get the close price directly
                 current_price = Decimal(str(market_data[symbol]["close"]))
             
-            # Calculate position value
-            if position.action == "BUY":
-                position_value = position.quantity * current_price
-            else:  # SELL
-                # For short positions, value increases as price decreases
-                position_value = position.quantity * (position.entry_price * Decimal("2.0") - current_price)
-                
-            equity += position_value
+            # Calculate unrealized P&L
+            pnl, _ = position.calculate_pnl(current_price)
+            equity += pnl
+            
+            # For short positions, add back the margin requirement
+            if position.action == "SELL":
+                margin_requirement = position.entry_price * position.quantity * Decimal("0.5")
+                equity += margin_requirement
             
         # Update drawdown metrics
         if equity > self.peak_equity:
@@ -372,6 +378,11 @@ class PortfolioManager:
             logger.warning(f"Invalid price {price} for position sizing")
             return Decimal("0")
             
+        # Check if we have positive capital
+        if self.current_capital <= Decimal("0"):
+            logger.warning(f"Negative or zero capital: {self.current_capital}")
+            return Decimal("0")
+            
         # Calculate risk amount
         risk_amount = self.current_capital * risk_percentage / Decimal("100.0")
         
@@ -380,8 +391,8 @@ class PortfolioManager:
             logger.warning(f"Negative or zero risk amount calculated: {risk_amount}")
             return Decimal("0")
         
-        # Limit risk amount to a maximum of 2% of capital regardless of input
-        max_risk_amount = self.current_capital * Decimal("0.02")
+        # Limit risk amount to a maximum of 1% of capital regardless of input
+        max_risk_amount = self.current_capital * Decimal("0.01")
         risk_amount = min(risk_amount, max_risk_amount)
         
         # Calculate position size
@@ -400,8 +411,8 @@ class PortfolioManager:
             # Default to percentage of capital
             quantity = risk_amount / price
         
-        # Limit position size to a maximum of 10% of capital
-        max_position_size = self.current_capital * Decimal("0.1") / price
+        # Limit position size to a maximum of 5% of capital
+        max_position_size = self.current_capital * Decimal("0.05") / price
         quantity = min(quantity, max_position_size)
         
         # Ensure quantity is positive

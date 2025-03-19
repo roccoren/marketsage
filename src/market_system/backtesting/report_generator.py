@@ -705,3 +705,751 @@ class ReportGenerator:
                 pass
                 
         return df 
+
+    def generate_symbol_report(self, 
+                            backtest_results: Dict,
+                            symbol: str,
+                            output_dir: Path) -> Dict[str, str]:
+        """
+        Generate a detailed report for a specific symbol.
+        Includes all trades, performance metrics, and visualizations.
+        
+        Args:
+            backtest_results: Full backtest results
+            symbol: The symbol to generate the report for
+            output_dir: Directory to save the report
+            
+        Returns:
+            Dictionary with paths to generated files
+        """
+        # Create output directory if it doesn't exist
+        symbol_dir = output_dir / symbol
+        symbol_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Filter trades for this symbol
+        all_trades = []
+        
+        # First check the trades array
+        if "trades" in backtest_results:
+            all_trades = backtest_results.get("trades", [])
+        # Then check portfolio_stats if available
+        elif "portfolio_stats" in backtest_results and "trades_with_timestamps" in backtest_results["portfolio_stats"]:
+            all_trades = backtest_results["portfolio_stats"]["trades_with_timestamps"]
+        
+        symbol_trades = [trade for trade in all_trades if trade.get("symbol") == symbol]
+        
+        # Calculate symbol-specific metrics
+        metrics = self._calculate_symbol_metrics(symbol_trades, backtest_results.get("initial_capital", 100000))
+        
+        # Create symbol performance dataframe
+        if not symbol_trades:
+            logger.warning(f"No trades found for symbol {symbol}")
+            return {}
+            
+        # Generate trade timeline and standardize field names
+        trades_df = pd.DataFrame(symbol_trades)
+        
+        # Standardize column names - map common field names to our standard field names
+        field_mappings = {
+            # Entry timestamp field mappings
+            "entry_timestamp": ["entry_timestamp", "entry_date", "timestamp"],
+            # Exit timestamp field mappings
+            "exit_timestamp": ["exit_timestamp", "exit_date"],
+            # Direction field mappings
+            "direction": ["direction", "action", "side", "trade_type"],
+            # Price field mappings
+            "entry_price": ["entry_price", "price", "open_price"],
+            "exit_price": ["exit_price", "close_price"],
+            # PnL field mappings
+            "realized_pnl": ["realized_pnl", "pnl", "profit_loss"]
+        }
+        
+        # Standardize column names in the dataframe
+        for target_field, source_fields in field_mappings.items():
+            if target_field not in trades_df.columns:
+                # Try to find one of the source fields
+                for source_field in source_fields:
+                    if source_field in trades_df.columns:
+                        trades_df[target_field] = trades_df[source_field]
+                        break
+        
+        # Ensure datetime columns are correctly formatted
+        if "entry_timestamp" in trades_df.columns:
+            trades_df["entry_timestamp"] = pd.to_datetime(trades_df["entry_timestamp"])
+        if "exit_timestamp" in trades_df.columns:
+            trades_df["exit_timestamp"] = pd.to_datetime(trades_df["exit_timestamp"])
+        
+        # Sort by entry timestamp if available
+        if "entry_timestamp" in trades_df.columns:
+            trades_df = trades_df.sort_values("entry_timestamp")
+        
+        # Generate symbol equity curve
+        equity_curve = self._reconstruct_symbol_equity_curve(symbol_trades, backtest_results.get("initial_capital", 100000))
+        
+        # Save results to JSON
+        json_path = symbol_dir / f"{symbol}_performance.json"
+        with open(json_path, 'w') as f:
+            json.dump({
+                "symbol": symbol,
+                "metrics": metrics,
+                "trades": symbol_trades
+            }, f, default=self._make_json_serializable, indent=2)
+        
+        # Generate visualizations
+        if len(equity_curve) > 1:
+            self._plot_symbol_equity_curve(equity_curve, trades_df, symbol_dir / f"{symbol}_equity_curve.png", symbol)
+            self._plot_symbol_drawdown(equity_curve, symbol_dir / f"{symbol}_drawdown.png", symbol)
+            self._plot_symbol_trade_distribution(trades_df, symbol_dir / f"{symbol}_trade_distribution.png", symbol)
+            self._plot_symbol_win_loss_ratio(trades_df, symbol_dir / f"{symbol}_win_loss.png", symbol)
+            
+        # Generate HTML report
+        html_path = symbol_dir / f"{symbol}_report.html"
+        self._generate_symbol_html_report(symbol, metrics, trades_df, html_path)
+        
+        return {
+            "json": str(json_path),
+            "html": str(html_path)
+        }
+        
+    def _calculate_symbol_metrics(self, trades: List[Dict], initial_capital: float) -> Dict:
+        """Calculate performance metrics for a specific symbol."""
+        if not trades:
+            return {
+                "total_trades": 0,
+                "win_rate": 0,
+                "profit_factor": 0,
+                "average_profit": 0,
+                "average_loss": 0,
+                "max_profit": 0,
+                "max_loss": 0,
+                "total_profit": 0,
+                "total_loss": 0,
+                "net_profit": 0
+            }
+        
+        try:
+            # 安全地获取PnL值的函数
+            def safe_get_pnl(trade):
+                try:
+                    # 首先尝试获取pnl字段
+                    if "pnl" in trade and trade["pnl"] is not None:
+                        return float(trade["pnl"])
+                    # 然后尝试realized_pnl字段
+                    elif "realized_pnl" in trade and trade["realized_pnl"] is not None:
+                        return float(trade["realized_pnl"])
+                    # 如果都不存在，返回0
+                    return 0
+                except (ValueError, TypeError):
+                    # 如果转换失败，返回0
+                    return 0
+            
+            # 安全地计算指标
+            total_trades = len(trades)
+            
+            # 分类交易
+            wins = []
+            losses = []
+            
+            for trade in trades:
+                pnl = safe_get_pnl(trade)
+                if pnl > 0:
+                    wins.append(trade)
+                else:
+                    losses.append(trade)
+            
+            win_count = len(wins)
+            loss_count = len(losses)
+            
+            win_rate = win_count / total_trades if total_trades > 0 else 0
+            
+            # 计算总利润和总亏损
+            total_profit = sum(safe_get_pnl(t) for t in wins)
+            total_loss = abs(sum(safe_get_pnl(t) for t in losses))
+            
+            # 计算平均利润和亏损
+            avg_profit = total_profit / win_count if win_count > 0 else 0
+            avg_loss = total_loss / loss_count if loss_count > 0 else 0
+            
+            # 计算最大利润和亏损
+            max_profit = max([safe_get_pnl(t) for t in wins]) if wins else 0
+            max_loss = abs(min([safe_get_pnl(t) for t in losses]) if losses else 0)
+            
+            # 计算利润因子
+            profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
+            
+            return {
+                "total_trades": total_trades,
+                "win_rate": win_rate * 100,
+                "profit_factor": profit_factor,
+                "average_profit": avg_profit,
+                "average_loss": avg_loss,
+                "max_profit": max_profit,
+                "max_loss": max_loss,
+                "total_profit": total_profit,
+                "total_loss": total_loss,
+                "net_profit": total_profit - total_loss
+            }
+        except Exception as e:
+            logger.error(f"Error calculating symbol metrics: {str(e)}")
+            # 返回默认值
+            return {
+                "total_trades": len(trades),
+                "win_rate": 0,
+                "profit_factor": 0,
+                "average_profit": 0,
+                "average_loss": 0,
+                "max_profit": 0,
+                "max_loss": 0,
+                "total_profit": 0,
+                "total_loss": 0,
+                "net_profit": 0
+            }
+        
+    def _reconstruct_symbol_equity_curve(self, trades: List[Dict], initial_equity: float) -> pd.DataFrame:
+        """Reconstruct an equity curve for a specific symbol."""
+        if not trades:
+            return pd.DataFrame(columns=["timestamp", "equity"])
+            
+        try:
+            # Convert trades to DataFrame
+            trades_df = pd.DataFrame(trades)
+            
+            # Find the right timestamp column - try exit_timestamp first, then entry_timestamp
+            timestamp_col = None
+            for col in ["exit_timestamp", "entry_timestamp", "timestamp"]:
+                if col in trades_df.columns:
+                    timestamp_col = col
+                    break
+                    
+            if not timestamp_col:
+                logger.warning("No valid timestamp column found in trades data")
+                return pd.DataFrame(columns=["timestamp", "equity"])
+                
+            # Filter out rows with invalid timestamps
+            valid_trades = trades_df.dropna(subset=[timestamp_col])
+            
+            if valid_trades.empty:
+                logger.warning("No valid timestamp data found in trades")
+                return pd.DataFrame(columns=["timestamp", "equity"])
+                
+            # Convert timestamps to datetime safely
+            try:
+                valid_trades[timestamp_col] = pd.to_datetime(valid_trades[timestamp_col], errors='coerce')
+                # Drop any rows that couldn't be converted
+                valid_trades = valid_trades.dropna(subset=[timestamp_col])
+            except Exception as e:
+                logger.warning(f"Error converting timestamps: {str(e)}")
+                return pd.DataFrame(columns=["timestamp", "equity"])
+            
+            if valid_trades.empty:
+                logger.warning("No valid datetime data found after conversion")
+                return pd.DataFrame(columns=["timestamp", "equity"])
+                
+            # Sort by timestamp
+            valid_trades = valid_trades.sort_values(timestamp_col)
+            
+            # Create equity curve
+            timestamps = []
+            equity_values = []
+            
+            # Start with initial equity
+            current_equity = initial_equity
+            equity_values.append(current_equity)
+            
+            # Get starting timestamp (minimum timestamp in the data)
+            try:
+                start_timestamp = valid_trades[timestamp_col].min()
+                timestamps.append(start_timestamp)
+            except Exception as e:
+                logger.warning(f"Error getting min timestamp: {str(e)}")
+                # Use current time as fallback
+                timestamps.append(pd.Timestamp.now())
+            
+            # Find the PnL column
+            pnl_col = None
+            for col in ["realized_pnl", "pnl", "profit_loss"]:
+                if col in valid_trades.columns:
+                    pnl_col = col
+                    break
+                    
+            if not pnl_col:
+                logger.warning("No valid P&L column found in trades data")
+                # Create basic equity curve with just the initial value
+                return pd.DataFrame({
+                    "timestamp": timestamps,
+                    "equity": equity_values
+                })
+            
+            # Add equity after each trade
+            for _, trade in valid_trades.iterrows():
+                try:
+                    pnl = float(trade.get(pnl_col, 0))
+                    current_equity += pnl
+                    equity_values.append(current_equity)
+                    timestamps.append(trade[timestamp_col])
+                except (ValueError, TypeError) as e:
+                    # Skip trades with invalid P&L
+                    logger.warning(f"Error processing trade P&L: {str(e)}")
+                    continue
+                    
+            # Create DataFrame
+            equity_df = pd.DataFrame({
+                "timestamp": timestamps,
+                "equity": equity_values
+            })
+            
+            return equity_df
+            
+        except Exception as e:
+            logger.error(f"Error reconstructing equity curve: {str(e)}")
+            # Return empty DataFrame
+            return pd.DataFrame(columns=["timestamp", "equity"])
+        
+    def _plot_symbol_equity_curve(self, equity_df: pd.DataFrame, trades_df: pd.DataFrame, 
+                              output_path: Path, symbol: str) -> None:
+        """Plot equity curve for a specific symbol with trade markers."""
+        # Check if the equity dataframe has valid data
+        if equity_df.empty or "equity" not in equity_df.columns or "timestamp" not in equity_df.columns:
+            # Create an empty chart with a message
+            plt.figure(figsize=(12, 6))
+            plt.title(f"Equity Curve for {symbol}\n(No equity data available)")
+            plt.xlabel("Date")
+            plt.ylabel("Equity ($)")
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+            return
+            
+        plt.figure(figsize=(12, 6))
+        
+        # Plot equity curve
+        plt.plot(equity_df["timestamp"], equity_df["equity"], label="Equity", linewidth=2)
+        
+        # Add markers for trades if we have the necessary data
+        pnl_column = None
+        exit_timestamp_column = None
+        
+        # Check for required columns
+        for col in ["realized_pnl", "pnl"]:
+            if col in trades_df.columns:
+                pnl_column = col
+                break
+                
+        if "exit_timestamp" in trades_df.columns:
+            exit_timestamp_column = "exit_timestamp"
+            
+        if pnl_column and exit_timestamp_column and not trades_df.empty:
+            try:
+                for _, trade in trades_df.iterrows():
+                    if pd.notna(trade[exit_timestamp_column]) and pd.notna(trade[pnl_column]):
+                        if trade[pnl_column] > 0:
+                            plt.scatter(trade[exit_timestamp_column], 
+                                      trade.get("exit_price", 0) * trade.get("quantity", 0), 
+                                      color="green", s=50, alpha=0.7, marker="^")
+                        else:
+                            plt.scatter(trade[exit_timestamp_column], 
+                                      trade.get("exit_price", 0) * trade.get("quantity", 0), 
+                                      color="red", s=50, alpha=0.7, marker="v")
+            except Exception as e:
+                logger.warning(f"Error plotting trade markers for {symbol}: {str(e)}")
+        
+        plt.title(f"Equity Curve for {symbol}")
+        plt.xlabel("Date")
+        plt.ylabel("Equity ($)")
+        plt.grid(True)
+        plt.legend()
+        
+        # Format x-axis dates
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+        plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+        plt.gcf().autofmt_xdate()
+        
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+        
+    def _plot_symbol_drawdown(self, equity_df: pd.DataFrame, output_path: Path, symbol: str) -> None:
+        """Plot drawdown chart for a specific symbol."""
+        # Check if the equity dataframe has valid data
+        if equity_df.empty or "equity" not in equity_df.columns or "timestamp" not in equity_df.columns:
+            # Create an empty chart with a message
+            plt.figure(figsize=(12, 6))
+            plt.title(f"Drawdown Chart for {symbol}\n(No equity data available)")
+            plt.xlabel("Date")
+            plt.ylabel("Drawdown (%)")
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+            return
+            
+        try:
+            # Calculate running maximum
+            equity_df["peak"] = equity_df["equity"].cummax()
+            
+            # Calculate drawdown
+            equity_df["drawdown"] = (equity_df["equity"] - equity_df["peak"]) / equity_df["peak"] * 100
+            
+            plt.figure(figsize=(12, 6))
+            plt.plot(equity_df["timestamp"], equity_df["drawdown"], color="red", linewidth=2)
+            plt.fill_between(equity_df["timestamp"], equity_df["drawdown"], 0, color="red", alpha=0.3)
+            
+            plt.title(f"Drawdown Chart for {symbol}")
+            plt.xlabel("Date")
+            plt.ylabel("Drawdown (%)")
+            plt.grid(True)
+            
+            # Format x-axis dates
+            plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+            plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+            plt.gcf().autofmt_xdate()
+            
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+        except Exception as e:
+            # If there's an error, create a basic chart
+            logger.warning(f"Error creating drawdown chart for {symbol}: {str(e)}")
+            plt.figure(figsize=(12, 6))
+            plt.title(f"Drawdown Chart for {symbol}\n(Error creating chart)")
+            plt.xlabel("Date")
+            plt.ylabel("Drawdown (%)")
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+        
+    def _plot_symbol_trade_distribution(self, trades_df: pd.DataFrame, output_path: Path, symbol: str) -> None:
+        """Plot trade profit/loss distribution for a specific symbol."""
+        # Check for PnL columns in the DataFrame
+        pnl_column = None
+        for col in ["realized_pnl", "pnl"]:
+            if col in trades_df.columns:
+                pnl_column = col
+                break
+                
+        if not pnl_column:
+            # Create an empty chart with a message
+            plt.figure(figsize=(12, 6))
+            plt.title(f"Trade Profit/Loss Distribution for {symbol}\n(No profit/loss data available)")
+            plt.xlabel("Profit/Loss ($)")
+            plt.ylabel("Frequency")
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+            return
+            
+        plt.figure(figsize=(12, 6))
+        
+        # Plot histogram of returns
+        trades_df[pnl_column].hist(bins=50, alpha=0.7)
+        
+        plt.axvline(x=0, color="black", linestyle="--", linewidth=1)
+        plt.title(f"Trade Profit/Loss Distribution for {symbol}")
+        plt.xlabel("Profit/Loss ($)")
+        plt.ylabel("Frequency")
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+        
+    def _plot_symbol_win_loss_ratio(self, trades_df: pd.DataFrame, output_path: Path, symbol: str) -> None:
+        """Plot win/loss ratio pie chart for a specific symbol."""
+        # Check for PnL columns in the DataFrame
+        pnl_column = None
+        for col in ["realized_pnl", "pnl"]:
+            if col in trades_df.columns:
+                pnl_column = col
+                break
+                
+        if not pnl_column:
+            # Create an empty chart with a message
+            plt.figure(figsize=(8, 8))
+            plt.title(f"Win/Loss Ratio for {symbol}\n(No profit/loss data available)")
+            plt.axis("equal")
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+            return
+            
+        # Count wins and losses
+        wins = (trades_df[pnl_column] > 0).sum()
+        losses = (trades_df[pnl_column] <= 0).sum()
+        
+        if wins + losses == 0:
+            # Create an empty chart with a message
+            plt.figure(figsize=(8, 8))
+            plt.title(f"Win/Loss Ratio for {symbol}\n(No trades with profit/loss data)")
+            plt.axis("equal")
+            plt.tight_layout()
+            plt.savefig(output_path)
+            plt.close()
+            return
+            
+        plt.figure(figsize=(8, 8))
+        
+        # Create pie chart
+        plt.pie([wins, losses], labels=["Wins", "Losses"], autopct="%1.1f%%", 
+               colors=["green", "red"], startangle=90, explode=(0.1, 0))
+        
+        plt.title(f"Win/Loss Ratio for {symbol}")
+        plt.axis("equal")
+        
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+        
+    def _generate_symbol_html_report(self, symbol: str, metrics: Dict, 
+                                 trades_df: pd.DataFrame, output_path: Path) -> None:
+        """Generate HTML report for a specific symbol."""
+        # Start building HTML content
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Symbol Report: {symbol}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                h1, h2, h3 {{ color: #333; }}
+                table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                .positive {{ color: green; }}
+                .negative {{ color: red; }}
+                .chart-container {{ margin: 20px 0; }}
+                .metrics-container {{ display: flex; flex-wrap: wrap; }}
+                .metric-box {{ flex: 1; min-width: 150px; margin: 10px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }}
+                .metric-value {{ font-size: 24px; font-weight: bold; margin: 10px 0; }}
+                .trades-table {{ max-height: 500px; overflow-y: auto; }}
+                .chart {{ width: 100%; max-width: 800px; margin: 20px auto; }}
+            </style>
+        </head>
+        <body>
+            <h1>Trading Report for {symbol}</h1>
+            
+            <h2>Performance Metrics</h2>
+            <div class="metrics-container">
+        """
+        
+        # Add metrics
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, Decimal)):
+                if key in ["win_rate", "profit_factor", "net_profit"]:
+                    color_class = "positive" if value > 0 else "negative"
+                else:
+                    color_class = ""
+                
+                # Format based on metric type
+                if key in ["win_rate"]:
+                    formatted_value = f"{value:.2f}%"
+                elif key in ["profit_factor"]:
+                    formatted_value = f"{value:.2f}"
+                elif "profit" in key or "loss" in key:
+                    formatted_value = f"${value:.2f}"
+                else:
+                    formatted_value = f"{value}"
+                
+                html_content += f"""
+                <div class="metric-box">
+                    <div>{key.replace('_', ' ').title()}</div>
+                    <div class="metric-value {color_class}">{formatted_value}</div>
+                </div>
+                """
+        
+        html_content += f"""
+            </div>
+            
+            <h2>Visualizations</h2>
+            <div class="chart-container">
+                <img class="chart" src="{symbol}_equity_curve.png" alt="Equity Curve">
+                <img class="chart" src="{symbol}_drawdown.png" alt="Drawdown Chart">
+                <img class="chart" src="{symbol}_trade_distribution.png" alt="Trade Distribution">
+                <img class="chart" src="{symbol}_win_loss.png" alt="Win/Loss Ratio">
+            </div>
+            
+            <h2>Trades</h2>
+            <div class="trades-table">
+                <table>
+                    <tr>
+                        <th>Entry Date</th>
+                        <th>Exit Date</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Exit Price</th>
+                        <th>Quantity</th>
+                        <th>P&L</th>
+                        <th>Return (%)</th>
+                    </tr>
+        """
+        
+        # Add trade rows
+        if not trades_df.empty:
+            # 重新组织交易数据，将开仓和平仓交易配对
+            open_trades = {}
+            completed_trades = []
+            position_ids = {}
+            
+            # 首先按照时间顺序对交易进行排序
+            trades_df = trades_df.sort_values("timestamp") if "timestamp" in trades_df.columns else trades_df
+            
+            # 识别开仓和平仓交易
+            for _, trade in trades_df.iterrows():
+                # 获取交易类型
+                trade_type = trade.get("type", "").upper()
+                position_id = trade.get("position_id", "")
+                
+                # 如果有position_id，使用它来配对交易
+                if position_id:
+                    if trade_type == "OPEN":
+                        # 存储开仓交易
+                        open_trades[position_id] = trade
+                    elif trade_type == "CLOSE" and position_id in open_trades:
+                        # 找到匹配的开仓交易，创建完整交易记录
+                        open_trade = open_trades[position_id]
+                        completed_trades.append({
+                            "entry_timestamp": open_trade.get("timestamp", ""),
+                            "exit_timestamp": trade.get("timestamp", ""),
+                            "direction": open_trade.get("action", ""),
+                            "entry_price": open_trade.get("price", 0),
+                            "exit_price": trade.get("price", 0),
+                            "quantity": open_trade.get("quantity", 0),
+                            "pnl": trade.get("pnl", 0)
+                        })
+                        # 从未完成交易中移除
+                        del open_trades[position_id]
+                else:
+                    # 如果没有position_id，使用其他字段来推断开仓/平仓
+                    # 可以使用action或其他字段来判断
+                    action = trade.get("action", "")
+                    symbol = trade.get("symbol", "")
+                    timestamp = trade.get("timestamp", "")
+                    
+                    # 使用symbol+timestamp作为键
+                    key = f"{symbol}_{timestamp}"
+                    
+                    if action in ["BUY", "SELL"]:
+                        if key not in position_ids:
+                            # 保存这个交易作为开仓交易
+                            position_ids[key] = len(position_ids)
+                            open_trades[position_ids[key]] = trade
+                        else:
+                            # 这是一个平仓交易，寻找匹配的开仓交易
+                            open_position_id = position_ids[key]
+                            if open_position_id in open_trades:
+                                open_trade = open_trades[open_position_id]
+                                
+                                # 创建完整的交易记录
+                                pnl = trade.get("pnl", 0)
+                                if pd.isna(pnl):
+                                    pnl = 0
+                                    
+                                completed_trades.append({
+                                    "entry_timestamp": open_trade.get("timestamp", ""),
+                                    "exit_timestamp": trade.get("timestamp", ""),
+                                    "direction": open_trade.get("action", ""),
+                                    "entry_price": open_trade.get("price", 0),
+                                    "exit_price": trade.get("price", 0),
+                                    "quantity": open_trade.get("quantity", 0),
+                                    "pnl": pnl
+                                })
+                                
+                                # 从未完成交易中移除
+                                del open_trades[open_position_id]
+            
+            # 处理仍然开放的交易（尚未平仓）
+            for position_id, open_trade in open_trades.items():
+                completed_trades.append({
+                    "entry_timestamp": open_trade.get("timestamp", ""),
+                    "exit_timestamp": "",  # 尚未平仓
+                    "direction": open_trade.get("action", ""),
+                    "entry_price": open_trade.get("price", 0),
+                    "exit_price": 0,  # 尚未平仓
+                    "quantity": open_trade.get("quantity", 0),
+                    "pnl": 0  # 尚未实现的盈亏
+                })
+            
+            # 现在使用配对后的交易数据
+            for trade in completed_trades:
+                try:
+                    # 安全地处理日期
+                    entry_timestamp = trade.get("entry_timestamp", None)
+                    if pd.notna(entry_timestamp) and entry_timestamp != "":
+                        try:
+                            entry_date = pd.to_datetime(entry_timestamp).strftime("%Y-%m-%d")
+                        except:
+                            entry_date = "N/A"
+                    else:
+                        entry_date = "N/A"
+                        
+                    exit_timestamp = trade.get("exit_timestamp", None)
+                    if pd.notna(exit_timestamp) and exit_timestamp != "":
+                        try:
+                            exit_date = pd.to_datetime(exit_timestamp).strftime("%Y-%m-%d")
+                        except:
+                            exit_date = "N/A"
+                    else:
+                        exit_date = "N/A"
+                except Exception as e:
+                    logger.warning(f"Error formatting dates for {symbol}: {str(e)}")
+                    entry_date = "N/A"
+                    exit_date = "N/A"
+                
+                # 获取方向
+                direction = trade.get("direction", "N/A")
+                
+                # 获取价格
+                try:
+                    entry_price = float(trade.get("entry_price", 0))
+                except (ValueError, TypeError):
+                    entry_price = 0
+                
+                try:
+                    exit_price = float(trade.get("exit_price", 0))
+                except (ValueError, TypeError):
+                    exit_price = 0
+                
+                try:
+                    quantity = float(trade.get("quantity", 0))
+                except (ValueError, TypeError):
+                    quantity = 0
+                
+                # 获取盈亏
+                try:
+                    pnl = float(trade.get("pnl", 0))
+                except (ValueError, TypeError):
+                    pnl = 0
+                
+                # 计算收益率
+                entry_value = entry_price * quantity if entry_price and quantity else 1  # 避免除以零
+                return_pct = (pnl / entry_value) * 100 if entry_value != 0 else 0
+                
+                # 根据盈亏确定颜色
+                row_class = "positive" if pnl > 0 else "negative" if pnl < 0 else ""
+                
+                html_content += f"""
+                    <tr>
+                        <td>{entry_date}</td>
+                        <td>{exit_date}</td>
+                        <td>{direction}</td>
+                        <td>${entry_price:.2f}</td>
+                        <td>${exit_price:.2f}</td>
+                        <td>{quantity}</td>
+                        <td class="{row_class}">${pnl:.2f}</td>
+                        <td class="{row_class}">{return_pct:.2f}%</td>
+                    </tr>
+                """
+        
+        html_content += """
+                </table>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Write HTML file
+        with open(output_path, "w") as f:
+            f.write(html_content) 

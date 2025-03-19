@@ -97,7 +97,6 @@ class BacktestEngine:
             risk_percentage: Decimal = Decimal("1.0"),
             benchmark_symbol: Optional[str] = None,
             parallel: bool = False,
-            market: str = "nasdaq",
             show_progress: bool = True) -> Dict:
         """
         Run the backtest for the specified symbols and timeframe.
@@ -108,7 +107,6 @@ class BacktestEngine:
             risk_percentage: Percentage of capital to risk per trade
             benchmark_symbol: Optional benchmark symbol for comparison
             parallel: Whether to process symbols in parallel
-            market: Market name (e.g., "nasdaq", "nyse")
             show_progress: Whether to show a progress bar
             
         Returns:
@@ -118,19 +116,30 @@ class BacktestEngine:
         logger.info(f"Starting backtest for {len(symbols)} symbols with timeframe {timeframe}")
         
         try:
-            # Load market data
+            # Get market data
             market_data = self.data_provider.get_data(
                 symbols=symbols,
                 start_date=self.start_date,
                 end_date=self.end_date,
-                timeframe=timeframe,
-                market=market
+                timeframe=timeframe
             )
             
-            # Debug: Check if market data was loaded
-            for symbol, data in market_data.items():
-                logger.info(f"Loaded data for {symbol}: {len(data)} data points")
-                logger.info(f"Data sample: {data.head()}")
+            # Handle None market data
+            if market_data is None:
+                market_data = {}
+            
+            # Preprocess data (calculate indicators)
+            market_data = self.data_provider.preprocess_data(market_data)
+            
+            # Handle None preprocessed data
+            if market_data is None:
+                market_data = {}
+                
+            # Get all unique timestamps across all symbols
+            all_timestamps = self._get_all_timestamps(market_data)
+            all_timestamps.sort()
+            
+            logger.info(f"Found {len(all_timestamps)} unique timestamps")
             
             # Load benchmark data if specified
             benchmark_data = None
@@ -139,18 +148,8 @@ class BacktestEngine:
                     symbols=[benchmark_symbol],
                     start_date=self.start_date,
                     end_date=self.end_date,
-                    timeframe=timeframe,
-                    market=market
+                    timeframe=timeframe
                 ).get(benchmark_symbol)
-            
-            # Preprocess data (calculate indicators)
-            market_data = self.data_provider.preprocess_data(market_data)
-            
-            # Get all unique timestamps across all symbols
-            all_timestamps = self._get_all_timestamps(market_data)
-            all_timestamps.sort()
-            
-            logger.info(f"Found {len(all_timestamps)} unique timestamps")
             
             # Run the simulation
             if parallel and len(symbols) > 1:
@@ -260,11 +259,31 @@ class BacktestEngine:
                         # Calculate price change
                         price_change = (current_price / previous_price - 1) * Decimal('100')
                         
-                        # Create a signal based on price movement
-                        if price_change > Decimal('0'):
-                            action = "BUY"
+                        # More conservative approach - use a 5-day moving average to determine trend
+                        if len(data) >= 5:
+                            ma5 = Decimal(str(data['close'].tail(5).mean()))
+                            ma10 = Decimal(str(data['close'].tail(10).mean())) if len(data) >= 10 else ma5
+                            
+                            # Only generate BUY signals when price is above the 5-day MA
+                            # and 5-day MA is above 10-day MA (confirmed uptrend)
+                            if current_price > ma5 and ma5 > ma10 and price_change > Decimal('0.5'):
+                                action = "BUY"
+                            # Only generate SELL signals when price is below the 5-day MA
+                            # and 5-day MA is below 10-day MA (confirmed downtrend)
+                            elif current_price < ma5 and ma5 < ma10 and price_change < Decimal('-0.5'):
+                                action = "SELL"
+                            else:
+                                # Skip if no clear trend
+                                continue
                         else:
-                            action = "SELL"
+                            # Fall back to simple price change if not enough data for MA
+                            if price_change > Decimal('1.0'):
+                                action = "BUY"
+                            elif price_change < Decimal('-1.0'):
+                                action = "SELL"
+                            else:
+                                # Skip small price changes
+                                continue
                             
                         # Create a signal
                         signal = Signal(
@@ -272,7 +291,7 @@ class BacktestEngine:
                             timestamp=timestamp,
                             action=action,
                             confidence=Decimal("0.8"),
-                            strategy_name=list(self.strategies.keys())[0],
+                            strategy_name=list(self.strategies.keys())[0] if self.strategies else "default_strategy",
                             market_state=MarketState.UNDEFINED,
                             indicators_snapshot={}
                         )
@@ -281,21 +300,35 @@ class BacktestEngine:
                         self.signals.append({
                             "timestamp": timestamp,
                             "symbol": symbol,
-                            "strategy": list(self.strategies.keys())[0],
+                            "strategy": list(self.strategies.keys())[0] if self.strategies else "default_strategy",
                             "action": action,
                             "confidence": 0.8,
                             "market_state": MarketState.UNDEFINED.value
                         })
                         
-                        # Execute the signal
-                        stop_loss = current_price * Decimal("0.95") if action == "BUY" else current_price * Decimal("1.05")
-                        take_profit = current_price * Decimal("1.1") if action == "BUY" else current_price * Decimal("0.9")
+                        # Set more conservative stop loss and take profit levels
+                        if action == "BUY":
+                            # Tighter stop loss for BUY (2% below entry)
+                            stop_loss = current_price * Decimal("0.98")
+                            # Reasonable take profit (5% above entry)
+                            take_profit = current_price * Decimal("1.05")
+                        else:  # SELL
+                            # Tighter stop loss for SELL (2% above entry)
+                            stop_loss = current_price * Decimal("1.02")
+                            # Reasonable take profit (5% below entry)
+                            take_profit = current_price * Decimal("0.95")
                         
-                        # Calculate position size - use a fixed risk percentage
-                        fixed_risk = Decimal("1.0")
+                        # Calculate position size - use a more conservative fixed risk percentage (0.5%)
+                        conservative_risk = Decimal("0.5")
                         position_size = self.portfolio_manager.get_position_sizing(
-                            symbol, current_price, fixed_risk, stop_loss
+                            symbol, current_price, conservative_risk, stop_loss
                         )
+                        
+                        # Further limit position size to a maximum of 2% of portfolio value
+                        max_position_value = self.portfolio_manager.current_capital * Decimal("0.02")
+                        position_value = position_size * current_price
+                        if position_value > max_position_value:
+                            position_size = max_position_value / current_price
                         
                         # Skip if position size is invalid
                         if position_size <= Decimal("0"):
@@ -306,6 +339,18 @@ class BacktestEngine:
                         cost = position_size * current_price
                         if cost > self.portfolio_manager.current_capital:
                             logger.warning(f"Not enough capital to open position: {symbol} {action} {position_size} @ {current_price}")
+                            continue
+                        
+                        # Check if we already have a position in this symbol
+                        has_position = False
+                        for pos in self.portfolio_manager.positions.values():
+                            if pos.symbol == symbol:
+                                has_position = True
+                                break
+                                
+                        # Skip if we already have a position in this symbol
+                        if has_position:
+                            logger.info(f"Already have position in {symbol}, skipping signal")
                             continue
                         
                         logger.info(f"Forced signal: {action} for {symbol} at {current_price}, position size: {position_size}")
@@ -508,9 +553,19 @@ class BacktestEngine:
         """
         if not signals:
             return
-            
-        for signal in signals:
-            symbol = signal.symbol
+        
+        # Sort signals by priority (lower number is higher priority)
+        sorted_signals = sorted(signals, key=lambda x: x.priority)
+        
+        # Group signals by symbol to avoid conflicting trades
+        symbol_signals = {}
+        for signal in sorted_signals:
+            # Keep only the highest priority signal for each symbol
+            if signal.symbol not in symbol_signals:
+                symbol_signals[signal.symbol] = signal
+                
+        # Process signals by symbol
+        for symbol, signal in symbol_signals.items():
             action = signal.action
             
             # Skip if no data for symbol
@@ -606,7 +661,7 @@ class BacktestEngine:
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
                 strategy_name=signal.strategy_name,
-                metadata={"signal": signal.to_dict()}
+                metadata={"signal": signal.to_dict() if hasattr(signal, 'to_dict') else {"strategy": signal.strategy_name}}
             )
             
             if position:

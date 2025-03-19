@@ -25,20 +25,31 @@ class TrendFollowingStrategy(BaseStrategy):
     below the slow moving average.
     """
     
-    def __init__(self, name="TrendFollowing", fast_period=2, slow_period=4):
+    def __init__(self, 
+                fast_period: int = 10, 
+                slow_period: int = 30,
+                signal_threshold: float = 0.0,
+                volume_threshold: float = 1.5,
+                priority: int = 2):  # Lower priority than MAC
         """
-        Initialize the trend following strategy.
+        Initialize the strategy with parameters.
         
         Args:
-            name (str): Name of the strategy
-            fast_period (int): Period for the fast moving average
-            slow_period (int): Period for the slow moving average
+            fast_period: Period for the fast moving average
+            slow_period: Period for the slow moving average
+            signal_threshold: Minimum difference between fast and slow MA to generate a signal
+            volume_threshold: Minimum volume compared to average to confirm a signal
+            priority: Priority level for this strategy (lower number = higher priority)
         """
-        super().__init__(name)
+        super().__init__(f"TREND_{fast_period}_{slow_period}")
         self.fast_period = fast_period
         self.slow_period = slow_period
-        self._required_indicators = ['fast_ma', 'slow_ma']
-        logger.info(f"Initialized {self.name} strategy with fast_period={fast_period}, slow_period={slow_period}")
+        self.signal_threshold = signal_threshold
+        self.volume_threshold = volume_threshold
+        self.priority = priority  # Add priority attribute
+        
+        logger.info(f"Initialized {self.name} with fast_period={fast_period}, slow_period={slow_period}, " 
+                   f"signal_threshold={signal_threshold}, volume_threshold={volume_threshold}, priority={priority}")
     
     def analyze(self, data: List[MarketData], market_state: MarketState) -> Optional[Signal]:
         """
