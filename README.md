@@ -160,48 +160,9 @@ python run_backtest.py optimize --strategy macd --exchange NYSE --symbol AAPL
 python run_backtest.py scan --strategy macd --exchange NYSE --date 2023-07-15
 ```
 
-### Using Qlib + RDAgent for Stock Signal Prediction
+### Qlib + RDAgent Integration
 
-To use the Qlib + RDAgent integration for stock trading signal prediction:
-
-```python
-from stockscan.models.qlib_rdagent import QlibRDPredictor, prepare_qlib_data, create_qlib_dataset
-
-# Prepare data
-data = prepare_qlib_data(
-    symbols=["AAPL", "MSFT", "GOOG"],
-    start_time="2020-01-01",
-    end_time="2022-12-31"
-)
-
-# Create datasets
-train_data, val_data, test_data = create_qlib_dataset(data)
-
-# Initialize and train model
-predictor = QlibRDPredictor(
-    qlib_model_type="LSTM",  # or "GRU"
-    use_rdagent=True
-)
-
-# Train model
-predictor.fit(
-    train_data=train_data,
-    val_data=val_data,
-    epochs=50
-)
-
-# Generate predictions
-predictions = predictor.predict(test_data)
-
-# Save model
-predictor.save("./models/qlib_rdagent_model")
-```
-
-You can also run the example script:
-
-```bash
-python examples/qlib_rdagent_example.py --symbols=AAPL,MSFT,GOOG --start-date=2020-01-01
-```
+The Qlib + RDAgent integration is currently being reimplemented. Documentation and examples will be provided once the new implementation is complete.
 
 ## Examples
 
