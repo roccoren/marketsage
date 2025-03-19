@@ -11,6 +11,7 @@ StockScan is a stock analysis and backtesting system for developing, testing, an
 - **Parameter Optimization**: Automatic optimization of strategy parameters to improve effectiveness
 - **Market Scanning**: Scan the market based on strategy signals to find trading opportunities
 - **Visualization**: Intuitive display of backtesting results and technical indicators
+- **Microsoft Qlib + RDAgent Integration**: Advanced stock prediction using Microsoft's Qlib library combined with RDAgent reinforcement learning for more effective buy/sell signal generation. This integration enables more accurate trading signal predictions through deep learning and reinforcement learning techniques.
 
 ## Directory Structure
 
@@ -157,6 +158,49 @@ python run_backtest.py optimize --strategy macd --exchange NYSE --symbol AAPL
 
 ```bash
 python run_backtest.py scan --strategy macd --exchange NYSE --date 2023-07-15
+```
+
+### Using Qlib + RDAgent for Stock Signal Prediction
+
+To use the Qlib + RDAgent integration for stock trading signal prediction:
+
+```python
+from stockscan.models.qlib_rdagent import QlibRDPredictor, prepare_qlib_data, create_qlib_dataset
+
+# Prepare data
+data = prepare_qlib_data(
+    symbols=["AAPL", "MSFT", "GOOG"],
+    start_time="2020-01-01",
+    end_time="2022-12-31"
+)
+
+# Create datasets
+train_data, val_data, test_data = create_qlib_dataset(data)
+
+# Initialize and train model
+predictor = QlibRDPredictor(
+    qlib_model_type="LSTM",  # or "GRU"
+    use_rdagent=True
+)
+
+# Train model
+predictor.fit(
+    train_data=train_data,
+    val_data=val_data,
+    epochs=50
+)
+
+# Generate predictions
+predictions = predictor.predict(test_data)
+
+# Save model
+predictor.save("./models/qlib_rdagent_model")
+```
+
+You can also run the example script:
+
+```bash
+python examples/qlib_rdagent_example.py --symbols=AAPL,MSFT,GOOG --start-date=2020-01-01
 ```
 
 ## Examples

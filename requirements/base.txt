@@ -6,3 +6,7 @@ yfinance>=0.1.70
 scikit-learn>=1.0.0
 tqdm>=4.62.0
 tabulate>=0.8.9
+pyqlib>=0.9.1
+rdkit>=2023.03.1
+tensorflow>=2.8.0
+torch>=1.10.0
