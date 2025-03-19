@@ -5,6 +5,7 @@ NASDAQ, NYSE, ASX, HKEX, TSX (Canada), and SGX (Singapore).
 """
 
 import os
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
@@ -13,6 +14,10 @@ import pandas as pd
 import requests
 from requests.exceptions import RequestException
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class Resolution(Enum):
     """Data resolution options."""
     Daily = "daily"
@@ -20,42 +25,110 @@ class Resolution(Enum):
     Minute = "minute"
     Second = "second"
 
+class LeanDataFetcherError(Exception):
+    """Base exception for LeanDataFetcher errors."""
+    pass
+
+class APICredentialsError(LeanDataFetcherError):
+    """Raised when API credentials are missing or invalid."""
+    pass
+
+class APIRequestError(LeanDataFetcherError):
+    """Raised when an API request fails."""
+    pass
+
 class LeanDataFetcher:
     """Fetches stock data using QuantConnect's API."""
     
-    def __init__(self, api_key: str = None, api_secret: str = None):
+    def __init__(self, api_id: str = None, api_token: str = None):
         """
         Initialize the data fetcher.
         
         Args:
-            api_key (str, optional): QuantConnect API key
-            api_secret (str, optional): QuantConnect API secret
+            api_id (str, optional): QuantConnect API ID (User ID)
+            api_token (str, optional): QuantConnect API Token
+        
+        Raises:
+            APICredentialsError: If API credentials are missing or invalid
         """
-        self.api_key = api_key or os.getenv('QUANTCONNECT_API_KEY')
-        self.api_secret = api_secret or os.getenv('QUANTCONNECT_API_SECRET')
+        self.api_id = api_id or os.getenv('QUANTCONNECT_API_ID')
+        self.api_token = api_token or os.getenv('QUANTCONNECT_API_TOKEN')
         self.base_url = "https://www.quantconnect.com/api/v2"
         
-        if not self.api_key or not self.api_secret:
-            raise ValueError(
+        if not self.api_id or not self.api_token:
+            raise APICredentialsError(
                 "QuantConnect API credentials not found. Please provide them either "
-                "through constructor arguments or set QUANTCONNECT_API_KEY and "
-                "QUANTCONNECT_API_SECRET environment variables."
+                "through constructor arguments or set environment variables:\n"
+                "  export QUANTCONNECT_API_ID='your_api_id'\n"
+                "  export QUANTCONNECT_API_TOKEN='your_api_token'\n\n"
+                "You can get these from your QuantConnect account at:\n"
+                "https://www.quantconnect.com/account#api-access"
             )
+        
+        # Verify credentials with a test API call
+        try:
+            self._verify_credentials()
+        except APIRequestError as e:
+            raise APICredentialsError(f"Invalid API credentials: {str(e)}")
+    
+    def _verify_credentials(self):
+        """Verify API credentials with a test call."""
+        try:
+            response = self._make_request('authenticate')
+            if not response.get('success'):
+                raise APIRequestError("Authentication failed")
+            logger.info("Successfully authenticated with QuantConnect API")
+        except Exception as e:
+            raise APIRequestError(f"Failed to verify credentials: {str(e)}")
     
     def _make_request(self, endpoint: str, method: str = 'GET', params: Dict = None) -> Dict:
-        """Make an API request to QuantConnect."""
+        """
+        Make an API request to QuantConnect.
+        
+        Args:
+            endpoint: API endpoint
+            method: HTTP method
+            params: Query parameters
+            
+        Returns:
+            Dict: API response
+            
+        Raises:
+            APIRequestError: If the request fails
+        """
         url = f"{self.base_url}/{endpoint}"
         headers = {
-            'Authorization': f"Bearer {self.api_key}:{self.api_secret}",
+            'Authorization': f"{self.api_id}:{self.api_token}",
             'Accept': 'application/json'
         }
         
         try:
+            logger.debug(f"Making {method} request to {endpoint}")
             response = requests.request(method, url, headers=headers, params=params)
-            response.raise_for_status()
-            return response.json()
+            
+            # Log response details for debugging
+            logger.debug(f"Response status code: {response.status_code}")
+            logger.debug(f"Response headers: {response.headers}")
+            
+            try:
+                response_data = response.json()
+            except ValueError:
+                logger.error(f"Failed to parse JSON response: {response.text}")
+                raise APIRequestError("Invalid JSON response from API")
+            
+            if not response.ok:
+                error_msg = response_data.get('message', 'Unknown error')
+                logger.error(f"API request failed: {error_msg}")
+                raise APIRequestError(f"API request failed: {error_msg}")
+            
+            return response_data
+            
         except RequestException as e:
-            raise Exception(f"API request failed: {str(e)}")
+            logger.error(f"Request failed: {str(e)}")
+            raise APIRequestError(f"Request failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            raise APIRequestError(f"Unexpected error: {str(e)}")
     
     def fetch_stock_data(
         self,
