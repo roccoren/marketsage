@@ -45,22 +45,10 @@ dev = [
     "pytest-cov>=2.12.1",
     "mypy>=0.910"
 ]
-docs = [
-    "sphinx>=4.0.2",
-    "sphinx-rtd-theme>=0.5.2"
-]
 
 [project.urls]
 "Repository" = "https://github.com/yourusername/stockscan"
-"Documentation" = "https://stockscan.readthedocs.io"
 "Bug Tracker" = "https://github.com/yourusername/stockscan/issues"
-
-[project.scripts]
-stockscan = "stockscan.main:main"
-
-[tool.setuptools]
-package-dir = {"" = "."}
-packages = ["stockscan"]
 
 [tool.black]
 line-length = 100
