@@ -1,400 +1,216 @@
-# StockScan Backtesting System
+# StockScan
 
-A comprehensive backtesting framework for testing trading strategies across multiple markets.
+StockScan is a comprehensive market analysis and backtesting platform designed for algorithmic trading strategies. It provides tools for data collection, analysis, strategy development, and backtesting.
 
-## Table of Contents
+## Features
 
-- [Overview](#overview)
-- [Installation](#installation)
-- [Data Management](#data-management)
-  - [Fetching Data Periodically](#fetching-data-periodically)
-  - [Data Structure](#data-structure)
-- [Running Backtests](#running-backtests)
-  - [Single Symbol Backtest](#single-symbol-backtest)
-  - [Market-wide Backtests](#market-wide-backtests)
-  - [Supported Markets](#supported-markets)
-- [Strategies](#strategies)
-  - [Built-in Strategies](#built-in-strategies)
-  - [Adding Custom Strategies](#adding-custom-strategies)
-  - [Strategy Filtering](#strategy-filtering)
-- [Performance Analysis](#performance-analysis)
-- [Configuration](#configuration)
-- [Examples](#examples)
-
-## Overview
-
-StockScan is a powerful backtesting system designed to evaluate trading strategies across multiple markets. It supports various timeframes, parallel execution, and comprehensive performance reporting.
+* **Market Data Collection**: Automatically fetch data from various sources including Yahoo Finance, Alpha Vantage, and local data files.
+* **Technical Indicators**: Over 30 built-in technical indicators including Moving Averages, RSI, MACD, Bollinger Bands, and more.
+* **Strategy Development**: Framework for creating and testing custom trading strategies.
+* **Backtesting System**: Powered by QuantConnect LEAN framework for professional-grade backtesting.
+* **Performance Metrics**: Comprehensive performance analysis including returns, Sharpe ratio, drawdowns, and more.
+* **Visualization**: Charts and plots for visual analysis of strategy performance.
 
 ## Installation
 
+### Prerequisites
+
+* Python 3.8+
+* .NET Core 6.0+ (for LEAN framework)
+* Market data (sample data included)
+
+### Setup
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/stockscan.git
+   cd stockscan
+   ```
+
+2. Install required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Install QuantConnect LEAN:
+   ```bash
+   # Clone the LEAN repository
+   git clone https://github.com/QuantConnect/Lean.git
+   
+   # Follow LEAN installation instructions
+   cd Lean
+   ./build.sh
+   ```
+
+4. Configure the system:
+   ```bash
+   cp config.example.json config.json
+   # Edit config.json to set your API keys and preferences
+   ```
+
+## Usage
+
+### Basic Usage
+
+Run a simple backtest using the command-line interface:
+
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/stockscan.git
-cd stockscan
-
-# Install dependencies
-pip install -r requirements.txt
+python main.py backtest --algorithm TrendFollowingAlgorithm --symbols AAPL MSFT --start-date 2022-01-01 --end-date 2022-12-31
 ```
 
-## Data Management
-
-### Fetching Data Periodically
-
-The system supports periodic data fetching to keep your market data up-to-date. You can set up automated data fetching using the following approaches:
-
-#### 1. Using the Market Data Fetcher Script
+### Advanced Options
 
 ```bash
-# Fetch data for specific symbols
-python fetch_market_data.py --market hkex --symbols 0700.HK,9988.HK --start-date 2023-01-01
-
-# Fetch data for an entire market
-python fetch_market_data.py --market nasdaq --start-date 2023-01-01
+python main.py backtest --algorithm TrendFollowingAlgorithm --symbols AAPL MSFT --start-date 2022-01-01 --end-date 2022-12-31 --initial-capital 100000 --resolution Daily --parameters '{"FastPeriod": 10, "SlowPeriod": 30}'
 ```
 
-Available options for the fetch_market_data.py script:
-```
-  -m, --market MARKET       Specific market to fetch (e.g., nyse, nasdaq)
-  -s, --symbols SYMBOLS     Comma-separated list of symbols to fetch
-  --start-date START_DATE   Start date (YYYY-MM-DD format, default: 2020-01-01)
-  --end-date END_DATE       End date (YYYY-MM-DD format, default: today)
-  --data-dir DATA_DIR       Directory for storing data
-  --config-dir CONFIG_DIR   Directory containing market configuration files
-  --max-concurrent MAX_CONCURRENT
-                            Maximum concurrent downloads
-  --batch-size BATCH_SIZE   Number of symbols to process in each batch
-  --requests-per-minute REQUESTS_PER_MINUTE
-                            Maximum API requests per minute
-  --continue-on-error       Continue processing if a market fails
-```
+### Available LEAN Algorithms
 
-#### 2. Setting Up Scheduled Data Updates
+The system comes with several pre-built algorithms:
 
-You can set up a cron job (Linux/Mac) or Task Scheduler (Windows) to run the data fetcher periodically:
+1. **TrendFollowingAlgorithm**: Follows market trends using moving averages.
+   ```bash
+   python main.py backtest --algorithm TrendFollowingAlgorithm --symbols AAPL --start-date 2022-01-01 --end-date 2022-12-31 --parameters '{"FastPeriod": 20, "SlowPeriod": 50}'
+   ```
 
-**Linux/Mac (crontab):**
-```
-# Run daily at 6 PM
-0 18 * * * cd /path/to/stockscan && python fetch_market_data.py --market hkex --start-date $(date -d "yesterday" +\%Y-\%m-\%d)
-```
+2. **MeanReversionAlgorithm**: Based on RSI (Relative Strength Index).
+   ```bash
+   python main.py backtest --algorithm MeanReversionAlgorithm --symbols AAPL --start-date 2022-01-01 --end-date 2022-12-31 --parameters '{"RsiPeriod": 14, "OversoldThreshold": 30, "OverboughtThreshold": 70}'
+   ```
 
-**Windows (Task Scheduler):**
-Create a batch file `update_data.bat`:
-```batch
-cd C:\path\to\stockscan
-python fetch_market_data.py --market hkex --start-date %date:~10,4%-%date:~4,2%-%date:~7,2%
-```
+3. **MovingAverageCrossoverAlgorithm**: Uses moving average crossovers with volume filters.
+   ```bash
+   python main.py backtest --algorithm MovingAverageCrossoverAlgorithm --symbols AAPL --start-date 2022-01-01 --end-date 2022-12-31
+   ```
 
-Then schedule this batch file to run daily using Task Scheduler.
+4. **VolatilityBreakoutAlgorithm**: Identifies breakout opportunities based on volatility.
+   ```bash
+   python main.py backtest --algorithm VolatilityBreakoutAlgorithm --symbols AAPL --start-date 2022-01-01 --end-date 2022-12-31
+   ```
 
-#### 3. Programmatic Data Updates
+5. **VolumeSpikeAlgorithm**: Identifies trading opportunities based on volume increases.
+   ```bash
+   python main.py backtest --algorithm VolumeSpikeAlgorithm --symbols AAPL --start-date 2022-01-01 --end-date 2022-12-31
+   ```
 
-You can also update data programmatically:
+### Adding Custom LEAN Algorithms
+
+To add a custom algorithm:
+
+1. Create a new algorithm file in `src/market_system/lean/algorithms/`
+2. Implement your algorithm by extending the `QCAlgorithm` class
+3. The algorithm will be automatically discovered by the system
+
+Example of a custom LEAN algorithm:
 
 ```python
-from src.market_data.providers.enhanced_fetcher import EnhancedMarketFetcher
-from datetime import datetime
+# src/market_system/lean/algorithms/my_algorithm.py
+from QuantConnect import *
+from QuantConnect.Algorithm import *
+from QuantConnect.Indicators import *
 
-# Initialize data fetcher
-fetcher = EnhancedMarketFetcher(data_dir="data")
-
-# Update data for specific market and symbols
-async def update_market_data():
-    await fetcher.fetch_market_data(
-        market="hkex",
-        symbols=["0700.HK", "9988.HK"],
-        start_date=datetime(2023, 1, 1),
-        end_date=datetime.now()
-    )
-
-# Run the async function
-import asyncio
-asyncio.run(update_market_data())
-```
-
-### Data Structure
-
-The system stores market data in a structured format:
-
-```
-data/
-├── hkex/
-│   ├── 0700.HK/
-│   │   ├── 2023-01-01.json
-│   │   ├── 2023-01-02.json
-│   │   └── ...
-│   ├── 9988.HK/
-│   │   └── ...
-├── nasdaq/
-│   └── ...
-├── nyse/
-│   └── ...
-└── asx/
-    └── ...
-```
-
-Each JSON file contains OHLCV data and additional market information for a specific date.
-
-## Running Backtests
-
-### Single Symbol Backtest
-
-To run a backtest for a single symbol:
-
-```bash
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following mean_reversion --generate-reports
-```
-
-### Market-wide Backtests
-
-To run a backtest across an entire market:
-
-```bash
-# Run backtest for all HKEX symbols
-python market_backtest.py --all-symbols --market hkex --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following --execution-mode parallel --workers 4 --generate-reports
-
-# Run backtest for specific symbols
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following mean_reversion --execution-mode parallel --workers 2 --generate-reports
-
-# Run backtest with symbols from a file
-python market_backtest.py --symbol-file symbols.txt --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following
-```
-
-#### Execution Modes
-
-The system supports two execution modes:
-
-1. **Parallel**: Uses multiple processes to run backtests in parallel
-   ```bash
-   python market_backtest.py --symbols 0700.HK 9988.HK --execution-mode parallel --workers 2
-   ```
-
-2. **Async**: Uses asynchronous execution for improved performance with many symbols
-   ```bash
-   python market_backtest.py --all-symbols --market nasdaq --execution-mode async --max-concurrent 20
-   ```
-
-### Supported Markets
-
-The system currently supports the following markets:
-
-- HKEX (Hong Kong Exchange)
-- NASDAQ
-- NYSE (New York Stock Exchange)
-- ASX (Australian Securities Exchange)
-
-To specify a market:
-
-```bash
-python market_backtest.py --all-symbols --market nasdaq --start-date 2023-01-01 --end-date 2023-12-31
-```
-
-## Strategies
-
-### Built-in Strategies
-
-The system comes with several built-in strategies:
-
-1. **Trend Following**: Based on moving average crossovers. Generates buy signals when the fast moving average crosses above the slow moving average, and sell signals when the fast moving average crosses below the slow moving average.
-   ```bash
-   python market_backtest.py --symbols 0700.HK --strategies trend_following --fast-period 20 --slow-period 50
-   ```
-
-2. **Mean Reversion**: Based on RSI (Relative Strength Index). Generates buy signals when the RSI falls below the oversold threshold, and sell signals when the RSI rises above the overbought threshold.
-   ```bash
-   python market_backtest.py --symbols 0700.HK --strategies mean_reversion --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70
-   ```
-
-3. **Moving Average Crossover**: Identifies opportunities when a faster moving average crosses above a slower moving average, combined with volume and price-to-VWAP filters.
-   ```bash
-   python market_backtest.py --symbols 0700.HK --strategies moving_average_crossover
-   ```
-
-4. **Volatility Breakout**: Identifies breakout opportunities based on increased volatility and volume, targeting stocks that are breaking out of consolidation patterns.
-   ```bash
-   python market_backtest.py --symbols 0700.HK --strategies volatility_breakout
-   ```
-
-5. **Volume Spike**: Identifies trading opportunities based on significant increases in trading volume, which often precede price movements.
-   ```bash
-   python market_backtest.py --symbols 0700.HK --strategies volume_spike
-   ```
-
-### Adding Custom Strategies
-
-To add a custom strategy:
-
-1. Create a new strategy file in `src/market_system/backtesting/strategies/`
-2. Implement your strategy by extending the `BaseStrategy` class
-3. Register your strategy in `src/market_system/backtesting/strategies/__init__.py`
-
-Example of a custom strategy:
-
-```python
-# src/market_system/backtesting/strategies/my_strategy.py
-from src.market_system.strategy.base_strategy import BaseStrategy
-from src.market_system.domain.models import MarketData, Signal, MarketState
-from typing import List, Optional
-
-class MyStrategy(BaseStrategy):
-    def __init__(self, name="MyStrategy", param1=10, param2=20):
-        super().__init__(name)
-        self.param1 = param1
-        self.param2 = param2
-        self._required_indicators = ['indicator1', 'indicator2']
+class MyAlgorithm(QCAlgorithm):
+    def Initialize(self):
+        self.SetStartDate(2022, 1, 1)
+        self.SetEndDate(2022, 12, 31)
+        self.SetCash(100000)
+        
+        self.symbol = self.AddEquity("AAPL", Resolution.Daily).Symbol
+        
+        # Define parameters with default values
+        self.fast_period = 10
+        self.slow_period = 30
+        
+        # Initialize indicators
+        self.fast_ma = self.SMA(self.symbol, self.fast_period, Resolution.Daily)
+        self.slow_ma = self.SMA(self.symbol, self.slow_period, Resolution.Daily)
+        
+        self.previous_state = None
     
-    def analyze(self, data: List[MarketData], market_state: MarketState) -> Optional[Signal]:
-        # Implement your strategy logic here
-        # Return a Signal object if a trading opportunity is identified
-        # Return None otherwise
-        pass
-    
-    def get_stop_loss(self, data: List[MarketData], signal: Signal) -> float:
-        # Implement stop loss calculation
-        pass
-    
-    def get_take_profit(self, data: List[MarketData], signal: Signal) -> float:
-        # Implement take profit calculation
-        pass
+    def OnData(self, data):
+        # Wait for indicators to be ready
+        if not self.fast_ma.IsReady or not self.slow_ma.IsReady:
+            return
+        
+        # Trading logic
+        current_price = data[self.symbol].Close
+        holdings = self.Portfolio[self.symbol].Quantity
+        
+        # Long when fast MA crosses above slow MA
+        if self.fast_ma.Current.Value > self.slow_ma.Current.Value and holdings <= 0:
+            self.SetHoldings(self.symbol, 1.0)
+        
+        # Short when fast MA crosses below slow MA
+        elif self.fast_ma.Current.Value < self.slow_ma.Current.Value and holdings >= 0:
+            self.SetHoldings(self.symbol, -1.0)
 ```
 
-Then register your strategy in `__init__.py`:
+### Converting Data for LEAN
 
-```python
-# src/market_system/backtesting/strategies/__init__.py
-from src.market_system.backtesting.strategies.trend_following import TrendFollowingStrategy
-from src.market_system.backtesting.strategies.mean_reversion import MeanReversionStrategy
-from src.market_system.backtesting.strategies.my_strategy import MyStrategy
-
-__all__ = [
-    'TrendFollowingStrategy',
-    'MeanReversionStrategy',
-    'MyStrategy'
-]
-```
-
-### Strategy Filtering
-
-The system includes a strategy analyzer that can filter symbols based on predefined criteria before running a full backtest. This can significantly improve performance by focusing only on promising candidates.
-
-#### Is Manual Strategy Filtering Necessary?
-
-No, manual strategy filtering is not necessary before running a backtest. The backtesting engine automatically applies appropriate filters based on the strategies being used. However, you can run a separate strategy filtering step if you want to:
-
-1. Pre-screen a large universe of symbols to identify the most promising candidates
-2. Apply more complex filtering criteria than what's built into the strategies
-3. Generate a list of filtered symbols for further analysis
-
-#### Running Strategy Filtering
+LEAN requires data in a specific format. Use the built-in converter:
 
 ```bash
-# Filter symbols based on strategy criteria
-python strategy_filter.py --market hkex --start-date 2023-01-01 --end-date 2023-12-31 --min-volume 1000000 --output filtered_symbols.txt
+python main.py convert-data --source-file data/raw/AAPL.csv --symbol AAPL
+```
 
-# Then run backtest with filtered symbols
-python market_backtest.py --symbol-file filtered_symbols.txt --start-date 2023-01-01 --end-date 2023-12-31 --strategies trend_following
+### Listing Available Algorithms
+
+To view all available algorithms:
+
+```bash
+python main.py list-algorithms
 ```
 
 ## Performance Analysis
 
 After running a backtest, the system generates comprehensive performance reports:
 
-```bash
-# Generate reports for a previous backtest
-python report_generator.py --input-file results/backtest_results_20230101_20231231.json --formats html,json,csv
+1. **Equity Curve**: Shows the growth of your portfolio over time
+2. **Drawdown Analysis**: Identifies periods of losses and their severity
+3. **Return Metrics**: Includes annualized return, Sharpe ratio, Sortino ratio
+4. **Trade Statistics**: Win rate, average win/loss, profit factor
+5. **Risk Metrics**: Beta, alpha, maximum drawdown
+
+Reports are saved to the `results` directory by default.
+
+## API Reference
+
+The system can also be used programmatically:
+
+```python
+from src.market_system.lean.lean_adapter import LeanAdapter, BacktestMode
+
+# Initialize adapter
+adapter = LeanAdapter(
+    config_path="config.json",
+    mode=BacktestMode.LEAN,
+    data_folder="data",
+    results_folder="results"
+)
+
+# Run a backtest
+results = adapter.run_backtest(
+    algorithm_name="TrendFollowingAlgorithm",
+    symbols=["AAPL", "MSFT"],
+    start_date="2022-01-01",
+    end_date="2022-12-31",
+    initial_capital=100000,
+    resolution="Daily",
+    parameters={"FastPeriod": 10, "SlowPeriod": 30}
+)
+
+# Access results
+print(f"Total return: {results['metrics']['total_return']:.2%}")
+print(f"Sharpe ratio: {results['metrics']['sharpe_ratio']:.2f}")
+print(f"Maximum drawdown: {results['metrics']['max_drawdown']:.2%}")
 ```
 
-Reports are saved in the `reports/backtest/` directory and include:
+## License
 
-- Equity curve charts
-- Trade statistics
-- Performance metrics (Sharpe ratio, max drawdown, etc.)
-- Trade distribution analysis
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Configuration
+## Acknowledgments
 
-You can customize the backtest configuration using command-line arguments or a configuration file:
-
-```bash
-# Using command-line arguments
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-12-31 --initial-capital 100000 --position-size 0.1 --stop-loss 0.05 --take-profit 0.1
-
-# Using a configuration file
-python market_backtest.py --config config.json
-```
-
-Example `config.json`:
-```json
-{
-  "symbols": ["0700.HK", "9988.HK"],
-  "start_date": "2023-01-01",
-  "end_date": "2023-12-31",
-  "strategies": ["trend_following", "mean_reversion"],
-  "initial_capital": 100000,
-  "position_size": 0.1,
-  "stop_loss": 0.05,
-  "take_profit": 0.1,
-  "execution_mode": "parallel",
-  "workers": 4,
-  "generate_reports": true
-}
-```
-
-## Examples
-
-### Example 1: Running a Simple Backtest
-
-```bash
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --strategies trend_following
-```
-
-### Example 2: Market-wide Backtest with Multiple Strategies
-
-```bash
-python market_backtest.py --all-symbols --market hkex --start-date 2023-01-01 --end-date 2023-01-31 --strategies trend_following mean_reversion --execution-mode parallel --workers 4 --generate-reports
-```
-
-### Example 3: Customizing Strategy Parameters
-
-```bash
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-01-31 --strategies trend_following --fast-period 10 --slow-period 30 --position-size 0.2 --stop-loss 0.03 --take-profit 0.09
-```
-
-### Example 4: Running Backtests with Different Timeframes
-
-```bash
-# Daily timeframe
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --timeframe 1d --strategies trend_following
-
-# Hourly timeframe
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-01-31 --timeframe 1h --strategies mean_reversion
-```
-
-### Example 5: Using All Available Strategies
-
-```bash
-# Running all strategies on a single symbol
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies trend_following mean_reversion moving_average_crossover volatility_breakout volume_spike --generate-reports
-
-# Running all strategies with custom parameters
-python market_backtest.py --symbols 0700.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies trend_following mean_reversion moving_average_crossover volatility_breakout volume_spike --fast-period 15 --slow-period 40 --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70 --position-size 0.15 --stop-loss 0.05 --take-profit 0.1 --generate-reports
-```
-
-### Example 6: Strategy-Specific Backtests
-
-```bash
-# Trend Following Strategy
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies trend_following --fast-period 10 --slow-period 30 --generate-reports
-
-# Mean Reversion Strategy
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies mean_reversion --rsi-period 14 --oversold-threshold 30 --overbought-threshold 70 --generate-reports
-
-# Moving Average Crossover Strategy
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies moving_average_crossover --generate-reports
-
-# Volatility Breakout Strategy
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies volatility_breakout --generate-reports
-
-# Volume Spike Strategy
-python market_backtest.py --symbols 0700.HK 9988.HK --start-date 2023-01-01 --end-date 2023-03-31 --strategies volume_spike --generate-reports
-```
+* QuantConnect for the LEAN framework
+* Yahoo Finance and Alpha Vantage for market data
+* The open-source community for various libraries used in this project

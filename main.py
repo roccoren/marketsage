@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """
-StockScan Backtesting System - Main Entry Point
+StockScan LEAN Backtesting System - Main Entry Point
 
 This script provides a command-line interface to run backtests using the StockScan
-backtesting system.
+backtesting system with the QuantConnect LEAN framework.
 """
 
 import argparse
 import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
+import sys
+import os
+import asyncio
 
-from src.market_system.backtesting.example import run_backtest
-from src.market_system.backtesting.backtest_engine import BacktestEngine
-from src.market_system.backtesting.data_provider import DataProvider
-from src.market_system.backtesting.portfolio_manager import PortfolioManager
-from src.market_system.backtesting.execution_handler import ExecutionHandler
-from src.market_system.backtesting.strategies import TrendFollowingStrategy
 from src.tools.configure_storage import main as configure_storage
 from src.tools.query_influxdb import main as query_influxdb
+
+# Import LEAN adapter
+from src.market_system.lean.lean_adapter import LeanAdapter, BacktestMode
 
 
 def setup_logging(verbose=False):
@@ -33,24 +32,47 @@ def setup_logging(verbose=False):
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='StockScan Backtesting System')
+    parser = argparse.ArgumentParser(description='StockScan LEAN Backtesting System')
     
     # Main command subparsers
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
     
-    # Run example backtest
-    example_parser = subparsers.add_parser('example', help='Run example backtest')
+    # LEAN backtest command
+    lean_parser = subparsers.add_parser('backtest', help='Run backtest using LEAN framework')
+    lean_parser.add_argument('--algorithm', required=True, help='Algorithm name to use (e.g., TrendFollowingAlgorithm)')
+    lean_parser.add_argument('--symbols', nargs='+', required=True, help='Symbols to backtest')
+    lean_parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
+    lean_parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
+    lean_parser.add_argument('--capital', type=float, default=100000, help='Initial capital')
+    lean_parser.add_argument('--resolution', choices=['Daily', 'Hour', 'Minute'], default='Daily', help='Data resolution')
+    lean_parser.add_argument('--config', help='Path to configuration file')
+    lean_parser.add_argument('--data-dir', default='data', help='Data directory')
+    lean_parser.add_argument('--results-dir', default='results', help='Results directory')
     
-    # Run custom backtest
-    backtest_parser = subparsers.add_parser('backtest', help='Run custom backtest')
-    backtest_parser.add_argument('--symbols', nargs='+', required=True, help='Symbols to backtest')
-    backtest_parser.add_argument('--timeframe', default='1d', help='Timeframe for backtest (e.g., 1d, 1h)')
-    backtest_parser.add_argument('--start-date', help='Start date (YYYY-MM-DD)')
-    backtest_parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
-    backtest_parser.add_argument('--capital', type=float, default=10000, help='Initial capital')
-    backtest_parser.add_argument('--risk', type=float, default=1.0, help='Risk percentage per trade')
-    backtest_parser.add_argument('--fast-ma', type=int, default=20, help='Fast moving average period')
-    backtest_parser.add_argument('--slow-ma', type=int, default=50, help='Slow moving average period')
+    # Algorithm-specific parameters
+    lean_parser.add_argument('--fast-period', type=int, help='Fast period for indicators')
+    lean_parser.add_argument('--slow-period', type=int, help='Slow period for indicators')
+    lean_parser.add_argument('--rsi-period', type=int, help='RSI period')
+    lean_parser.add_argument('--oversold-threshold', type=float, help='Oversold threshold for RSI')
+    lean_parser.add_argument('--overbought-threshold', type=float, help='Overbought threshold for RSI')
+    lean_parser.add_argument('--stop-loss-pct', type=float, help='Stop loss percentage')
+    lean_parser.add_argument('--take-profit-pct', type=float, help='Take profit percentage')
+    
+    # List LEAN algorithms
+    list_algorithms_parser = subparsers.add_parser('list-algorithms', help='List available LEAN algorithms')
+    
+    # Convert data to LEAN format
+    convert_parser = subparsers.add_parser('convert-data', help='Convert market data to LEAN format')
+    convert_parser.add_argument('--source-file', required=True, help='Source data file')
+    convert_parser.add_argument('--symbol', required=True, help='Symbol name')
+    convert_parser.add_argument('--output-file', help='Output file path')
+    convert_parser.add_argument('--config', help='Path to configuration file')
+    convert_parser.add_argument('--data-dir', help='Data directory')
+    
+    # Run example
+    example_parser = subparsers.add_parser('example', help='Run LEAN example backtest')
+    example_parser.add_argument('--algorithm', choices=['trend', 'mean_reversion', 'all'], default='all', 
+                               help='Algorithm to run (trend, mean_reversion, or all)')
     
     # Configure storage
     storage_parser = subparsers.add_parser('configure-storage', help='Configure data storage backend')
@@ -87,122 +109,144 @@ def parse_args():
     return parser.parse_args()
 
 
-def run_custom_backtest(args):
-    """Run a custom backtest based on command line arguments."""
-    # Set up paths
-    data_dir = Path(args.data_dir)
-    output_dir = Path(args.output_dir)
-    
-    # Ensure directories exist
-    data_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Parse dates
-    end_date = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else datetime.now()
-    start_date = datetime.strptime(args.start_date, '%Y-%m-%d') if args.start_date else (end_date - timedelta(days=365))
-    
-    # Set up report name
-    report_name = args.report_name or f"backtest_{args.symbols[0]}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}"
-    
-    # Initialize components
-    data_provider = DataProvider(str(data_dir))
-    strategy = TrendFollowingStrategy(
-        fast_period=args.fast_ma,
-        slow_period=args.slow_ma
-    )
-    portfolio_manager = PortfolioManager(initial_capital=Decimal(str(args.capital)))
-    execution_handler = ExecutionHandler(
-        slippage_model="percentage",
-        slippage_params={"percentage": 0.001},
-        commission_model="fixed",
-        commission_params={"fixed_amount": Decimal("5.0")}
-    )
-    
-    # Create backtest engine
-    engine = BacktestEngine(
-        initial_capital=Decimal(str(args.capital)),
-        start_date=start_date,
-        end_date=end_date,
-        data_provider=data_provider,
-        strategies=[strategy],
-        portfolio_manager=portfolio_manager,
-        execution_handler=execution_handler
-    )
-    
-    # Run backtest
-    results = engine.run(
-        symbols=args.symbols,
-        timeframe=args.timeframe,
-        risk_percentage=args.risk,
-        show_progress=True
-    )
-    
-    # Generate report
-    report_paths = engine.generate_report(
-        output_dir=str(output_dir),
-        report_name=report_name
-    )
-    
-    # Print summary
-    print("\nBacktest Summary:")
-    print(f"Strategy: {results['strategy_name']}")
-    print(f"Period: {results['start_date'].date()} to {results['end_date'].date()}")
-    print(f"Initial Capital: ${float(results['initial_capital']):,.2f}")
-    print(f"Final Equity: ${results['final_equity']:,.2f}")
-    
-    # Print metrics (if available)
-    metrics = results.get('metrics', {})
-    print(f"Total Return: {metrics.get('total_return', 0.0):.2%}")
-    print(f"Sharpe Ratio: {metrics.get('sharpe_ratio', 0.0):.2f}")
-    print(f"Max Drawdown: {metrics.get('max_drawdown', 0.0):.2%}")
-    
-    if metrics.get('total_trades', 0) > 0:
-        print(f"Win Rate: {metrics.get('win_rate', 0.0):.2%}")
-        print(f"Profit Factor: {metrics.get('profit_factor', 0.0):.2f}")
-        print(f"Total Trades: {metrics.get('total_trades', 0)}")
-    else:
-        print("No trades executed during the backtest period.")
-    
-    print("\nReport generated at:")
-    for format_name, path in report_paths.items():
-        print(f"- {format_name}: {path}")
-    
-    return results
-
-
-def main():
-    """Main entry point."""
-    args = parse_args()
-    setup_logging(args.verbose)
-    
-    if args.command == 'example':
-        run_backtest()
-    elif args.command == 'backtest':
-        run_custom_backtest(args)
-    elif args.command == 'fetch-data':
-        fetch_market_data(args)
-    elif args.command == 'configure-storage':
-        # Pass arguments to the configure_storage function
-        from argparse import Namespace
-        storage_args = Namespace(
-            use_influxdb=args.use_influxdb,
-            use_file_storage=args.use_file_storage,
-            influxdb_url=args.influxdb_url,
-            influxdb_token=args.influxdb_token,
-            influxdb_org=args.influxdb_org,
-            influxdb_bucket=args.influxdb_bucket
+def run_lean_backtest(args):
+    """Run a backtest using the LEAN framework."""
+    try:
+        # Initialize adapter
+        adapter = LeanAdapter(
+            config_path=args.config,
+            data_folder=args.data_dir,
+            results_folder=args.results_dir
         )
-        configure_storage(storage_args)
-    elif args.command == 'query-influxdb':
-        # Call the query_influxdb function
-        query_influxdb()
-    else:
-        print("Please specify a command. Use --help for more information.")
+        
+        # Check if we have algorithms
+        if not adapter.get_available_algorithms():
+            print("Error: No LEAN algorithms available.")
+            print("Make sure LEAN framework is properly installed and algorithms are in the correct location.")
+            print("Check src/market_system/lean/algorithms/ directory for algorithm implementations.")
+            return
+        
+        # Get backtest parameters
+        parameters = {}
+        
+        # Add strategy-specific parameters
+        if hasattr(args, 'fast_period') and args.fast_period:
+            parameters['FastPeriod'] = args.fast_period
+        if hasattr(args, 'slow_period') and args.slow_period:
+            parameters['SlowPeriod'] = args.slow_period
+        if hasattr(args, 'rsi_period') and args.rsi_period:
+            parameters['RsiPeriod'] = args.rsi_period
+        if hasattr(args, 'oversold_threshold') and args.oversold_threshold:
+            parameters['OversoldThreshold'] = args.oversold_threshold
+        if hasattr(args, 'overbought_threshold') and args.overbought_threshold:
+            parameters['OverboughtThreshold'] = args.overbought_threshold
+        if hasattr(args, 'stop_loss_pct') and args.stop_loss_pct:
+            parameters['StopLossPercentage'] = args.stop_loss_pct
+        if hasattr(args, 'take_profit_pct') and args.take_profit_pct:
+            parameters['TakeProfitPercentage'] = args.take_profit_pct
+        
+        # Run backtest
+        results = adapter.run_backtest(
+            algorithm_name=args.algorithm,
+            symbols=args.symbols,
+            start_date=args.start_date,
+            end_date=args.end_date or datetime.now().strftime('%Y-%m-%d'),
+            initial_capital=args.capital or 100000,
+            resolution=args.resolution or 'Daily',
+            parameters=parameters
+        )
+        
+        # Display results
+        print("\nBacktest Results:")
+        print(f"Algorithm: {results['algorithm_name']}")
+        print(f"Period: {results['start_date']} to {results['end_date']}")
+        print(f"Initial Capital: ${results['initial_capital']:.2f}")
+        print(f"Final Capital: ${results['final_capital']:.2f}")
+        print(f"Total Return: {results['metrics']['total_return']:.2%}")
+        print(f"Annual Return: {results['metrics']['annual_return']:.2%}")
+        print(f"Sharpe Ratio: {results['metrics']['sharpe_ratio']:.2f}")
+        print(f"Maximum Drawdown: {results['metrics']['max_drawdown']:.2%}")
+        print(f"Total Trades: {results['total_trades']}")
+        print(f"Runtime: {results['runtime']}")
+        
+        # Print result files
+        if results['result_files']:
+            print("\nResult Files:")
+            for name, path in results['result_files'].items():
+                print(f"- {name}: {path}")
+    except Exception as e:
+        print(f"Error running backtest: {e}")
+        print("Make sure LEAN framework is properly installed and required data is available.")
+        
+    return
+
+
+def list_lean_algorithms(args):
+    """List available LEAN algorithms."""
+    try:
+        adapter = LeanAdapter()
+        algorithms = adapter.get_available_algorithms()
+        
+        if not algorithms:
+            print("No LEAN algorithms found.")
+            return
+        
+        print("Available LEAN algorithms:")
+        for algo in algorithms:
+            print(f"  - {algo}")
+    except Exception as e:
+        print(f"Error: {e}")
+        print("Could not list algorithms. Make sure LEAN framework is installed.")
+        print("To install LEAN, follow the instructions at: https://github.com/QuantConnect/Lean")
+        
+    return
+
+
+def convert_data_to_lean(args):
+    """Convert market data to LEAN format."""
+    try:
+        # Initialize adapter
+        adapter = LeanAdapter(
+            config_path=args.config,
+            data_folder=args.data_dir,
+            results_folder=None
+        )
+        
+        # Validate input
+        if not os.path.exists(args.source_file):
+            print(f"Error: Source file '{args.source_file}' does not exist.")
+            return
+        
+        # Convert data
+        output_path = adapter.convert_data_to_lean(
+            data_path=args.source_file,
+            symbol=args.symbol,
+            output_path=args.output_file
+        )
+        
+        print(f"Data successfully converted to LEAN format.")
+        print(f"Output file: {output_path}")
+    except Exception as e:
+        print(f"Error converting data: {e}")
+        print("Make sure the source file has the required columns: timestamp, open, high, low, close, volume")
+    
+    return
+
+
+def run_example(args):
+    """Run LEAN example backtest."""
+    import examples.lean_backtest_example as example
+    
+    if args.algorithm == 'trend':
+        example.run_trend_following_backtest()
+    elif args.algorithm == 'mean_reversion':
+        example.run_mean_reversion_backtest()
+    else:  # 'all'
+        example.run_all_backtests()
 
 
 def fetch_market_data(args):
     """Fetch market data based on command-line arguments."""
-    import asyncio
     from src.market_data.core.market_fetcher import ConsolidatedMarketFetcher
     from src.market_data.providers.enhanced_fetcher import EnhancedMarketFetcher
     
@@ -230,6 +274,40 @@ def fetch_market_data(args):
     
     # Run the async function
     asyncio.run(fetch_data())
+
+
+def main():
+    """Main entry point."""
+    args = parse_args()
+    setup_logging(args.verbose)
+    
+    if args.command == 'backtest':
+        run_lean_backtest(args)
+    elif args.command == 'list-algorithms':
+        list_lean_algorithms(args)
+    elif args.command == 'convert-data':
+        convert_data_to_lean(args)
+    elif args.command == 'example':
+        run_example(args)
+    elif args.command == 'fetch-data':
+        fetch_market_data(args)
+    elif args.command == 'configure-storage':
+        # Pass arguments to the configure_storage function
+        from argparse import Namespace
+        storage_args = Namespace(
+            use_influxdb=args.use_influxdb,
+            use_file_storage=args.use_file_storage,
+            influxdb_url=args.influxdb_url,
+            influxdb_token=args.influxdb_token,
+            influxdb_org=args.influxdb_org,
+            influxdb_bucket=args.influxdb_bucket
+        )
+        configure_storage(storage_args)
+    elif args.command == 'query-influxdb':
+        # Call the query_influxdb function
+        query_influxdb()
+    else:
+        print("Please specify a command. Use --help for more information.")
 
 
 if __name__ == "__main__":
