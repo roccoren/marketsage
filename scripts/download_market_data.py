@@ -175,30 +175,47 @@ def load_symbols_from_file(file_path):
     with open(file_path, 'r') as f:
         return [line.strip() for line in f if line.strip()]
 
-def download_market_data():
+def download_market_data(symbols_file=None, symbols=None, save_dir=None, start_date=None, end_date=None, interval="1d"):
     """Download market data using custom collector."""
     # Define target directory for market data
-    target_dir = Path("data/market")
+    target_dir = Path(save_dir) if save_dir else Path("data/market")
     
     logger.info(f"Starting market data download to {target_dir.absolute()}...")
     
-    # Load symbols from file
-    symbols_file = Path("config/market/mid-mrk-momentum-master.txt")
-    symbols = load_symbols_from_file(symbols_file)
-    logger.info(f"Loaded {len(symbols)} symbols from {symbols_file}")
+    # Get symbols either from direct input or from file
+    symbol_list = []
+    if symbols:
+        symbol_list = [s.strip() for s in symbols.split(',')]
+        logger.info(f"Using {len(symbol_list)} symbols from command line: {symbols}")
+    elif symbols_file:
+        # Load symbols from file
+        symbols_path = Path(symbols_file)
+        symbol_list = load_symbols_from_file(symbols_path)
+        logger.info(f"Loaded {len(symbol_list)} symbols from {symbols_path}")
+    else:
+        # Default symbols file
+        symbols_path = Path("config/market/mid-mrk-momentum-master.txt")
+        symbol_list = load_symbols_from_file(symbols_path)
+        logger.info(f"Loaded {len(symbol_list)} symbols from default file: {symbols_path}")
+    
+    if not symbol_list:
+        logger.error("No symbols specified. Please provide symbols directly or via a symbols file.")
+        return None
     
     # Download data
     collector = MarketDataCollector(
         save_dir=target_dir,
-        start_date="2019-01-01",
+        start_date=start_date or "2019-01-01",
+        end_date=end_date,
+        interval=interval,
         max_workers=8
     )
     
     # Download data
-    collector.download_data(symbols)
+    collector.download_data(symbol_list)
     
     # Process data
-    collector.normalize_data(symbols)
+    collector.normalize_data(symbol_list)
     
     logger.info("Market data download completed!")
     

@@ -19,8 +19,12 @@ stockscan/
 ├── config/                       # Configuration files directory
 │   ├── default_config.yaml       # Default configuration
 │   ├── logging_config.yaml       # Logging configuration
+│   ├── strategy_config.yaml      # Strategy configuration
+│   ├── config.json               # General configuration
+│   ├── requirements.txt          # Config-specific requirements
 │   ├── exchanges/                # Exchange-specific configurations
-│   └── strategies/               # Strategy parameter configurations
+│   ├── strategies/               # Strategy parameter configurations
+│   └── market/                   # Market-specific configurations
 │
 ├── data/                         # Data directory
 │   ├── raw/                      # Raw data
@@ -30,7 +34,13 @@ stockscan/
 │   └── cache/                    # Cached data
 │
 ├── stockscan/                    # Main code directory
+│   ├── __init__.py               # Package initialization
+│   ├── main.py                   # Main application entry point
+│   ├── py.typed                  # Type hint marker file
 │   ├── core/                     # Core functionality
+│   │   ├── __init__.py           # Package initialization
+│   │   ├── data_loader.py        # Data loading functionality
+│   │   ├── manager.py            # Core management functions
 │   │   ├── data/                 # Data processing core
 │   │   ├── market/               # Market related
 │   │   └── types/                # Type definitions
@@ -50,11 +60,18 @@ stockscan/
 ├── notebooks/                    # Jupyter notebooks
 ├── docs/                         # Documentation
 ├── output/                       # Output directory
+├── reports/                      # Analysis reports directory
+├── logs/                         # Log files directory
 │
 ├── requirements/                 # Dependency management
 ├── .gitignore                    # Git ignore file
+├── .cursorignore                 # Cursor editor ignore file
+├── .dockerignore                 # Docker ignore file
+├── Dockerfile                    # Docker container definition
+├── pyproject.toml                # Python project configuration
 ├── README.md                     # Project description
 ├── setup.py                      # Installation script
+├── run.py                        # Unified CLI entry point
 └── run_backtest.py               # Main entry script
 ```
 
@@ -87,6 +104,36 @@ pip install -e .  # Install in development mode
 ```
 
 ## Usage
+
+### Unified Command Line Interface
+
+StockScan now provides a unified command line interface for all operations:
+
+```bash
+# Run backtesting
+python run.py backtest --strategy macd --symbols AAPL MSFT --market nasdaq
+
+# Run optimization
+python run.py optimize --strategy macd --symbols AAPL --market nyse --n-trials 100
+
+# Download market data
+python run.py download --symbols-file data/symbols/nasdaq.txt --start-date 2020-01-01
+
+# Run QLib strategies
+python run.py qlib --qlib-config config/qlib_config.yaml --strategy alpha158
+
+# Cleanup temporary files
+python run.py cleanup --target-dir data/cache --dry-run
+
+# Scan stocks with a strategy
+python run.py scan --strategy macd --market nasdaq
+```
+
+### Running the Stock Scanner
+
+```bash
+python -m stockscan.main --exchanges HKEX --strategies rsi_stoch,atr_ma,adx_macd_cci,obv
+```
 
 ### Data Download
 
@@ -130,6 +177,25 @@ Detailed documentation is located in the `docs` directory:
 - `docs/api/`: API documentation
 
 ## Development Guide
+
+### Docker Usage
+
+You can run StockScan in a Docker container:
+
+```bash
+# Build the Docker image
+docker build -t stockscan .
+
+# Run the container
+docker run -it stockscan backtest --strategy macd --exchange NYSE --symbol AAPL
+
+# Run with volume mounts for data persistence
+docker run -it \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/output:/app/output \
+  -v $(pwd)/logs:/app/logs \
+  stockscan scan --strategy macd --exchange NYSE --date 2023-07-15
+```
 
 ### Adding New Strategies
 

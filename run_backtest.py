@@ -9,6 +9,8 @@ import argparse
 import logging
 from pathlib import Path
 import json
+import pandas as pd
+import importlib
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
@@ -115,16 +117,16 @@ def load_strategy(strategy_name: str, params_file: Optional[str] = None) -> Any:
     
     try:
         strategy_map = {
-            'macd': 'src.strategies.macd',
-            'multi_indicator': 'src.strategies.multi_indicator_strategy',
-            'crossover': 'src.strategies.crossover',
-            'combined_signal': 'src.strategies.combined_signal',
-            'advanced_multi': 'src.strategies.advanced_multi_strategy',
-            'optimized_multi': 'src.strategies.optimized_multi_strategy',
-            'adx_macd_cci': 'src.strategies.strategy_adx_macd_cci',
-            'atr_moving_average': 'src.strategies.strategy_atr_moving_average',
-            'obv': 'src.strategies.strategy_obv',
-            'rsi_stochastic': 'src.strategies.strategy_rsi_stochastic'
+            'macd': 'stockscan.strategies.technical.macd',
+            'multi_indicator': 'stockscan.strategies.technical.multi_indicator_strategy',
+            'crossover': 'stockscan.strategies.crossover',
+            'combined_signal': 'stockscan.strategies.combined_signal',
+            'advanced_multi': 'stockscan.strategies.advanced_multi_strategy',
+            'optimized_multi': 'stockscan.strategies.optimized_multi_strategy',
+            'adx_macd_cci': 'stockscan.strategies.technical.strategy_adx_macd_cci',
+            'atr_moving_average': 'stockscan.strategies.strategy_atr_moving_average',
+            'obv': 'stockscan.strategies.strategy_obv',
+            'rsi_stochastic': 'stockscan.strategies.technical.strategy_rsi_stochastic'
         }
         
         if strategy_name not in strategy_map:
@@ -149,7 +151,10 @@ def load_strategy(strategy_name: str, params_file: Optional[str] = None) -> Any:
 
 def run_backtest(args) -> None:
     """Run backtest with given arguments"""
-    logger.info(f"Running backtest for {args.symbol} on {args.exchange} using {args.strategy} strategy")
+    symbol = args.symbols[0] if isinstance(args.symbols, list) else args.symbols
+    market = args.market
+    
+    logger.info(f"Running backtest for {symbol} on {market} using {args.strategy} strategy")
     
     # Load strategy
     strategy = load_strategy(args.strategy, args.params_file)
@@ -158,25 +163,25 @@ def run_backtest(args) -> None:
     
     # Load data
     data_loader = ExchangeDataLoader()
-    data = data_loader.load_stock_data(args.exchange, args.symbol)
+    data = data_loader.load_stock_data(market, symbol)
     
     if data is None or len(data) < 50:
-        logger.error(f"Insufficient data for {args.symbol} ({args.exchange})")
+        logger.error(f"Insufficient data for {symbol} ({market})")
         return
     
     # Set up backtester
     backtester = Backtester(
         strategy=strategy,
-        initial_capital=args.capital,
-        position_size=args.position_size,
-        commission=args.commission,
-        slippage=args.slippage
+        initial_capital=args.capital if hasattr(args, 'capital') else 10000,
+        position_size=args.position_size if hasattr(args, 'position_size') else 1.0,
+        commission=args.commission if hasattr(args, 'commission') else 0.001,
+        slippage=args.slippage if hasattr(args, 'slippage') else 0.001
     )
     
     # Run backtest
     result = backtester.run(
         data=data,
-        symbol=args.symbol,
+        symbol=symbol,
         start_date=args.start_date if args.start_date else None,
         end_date=args.end_date if args.end_date else None
     )
@@ -187,7 +192,7 @@ def run_backtest(args) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = output_dir / f"{args.symbol}_{args.strategy}_{timestamp}.json"
+        output_file = output_dir / f"{symbol}_{args.strategy}_{timestamp}.json"
         
         with open(output_file, 'w') as f:
             metrics = result.metrics.copy()
@@ -199,7 +204,7 @@ def run_backtest(args) -> None:
         logger.info(f"Results saved to {output_file}")
         
         # Display results
-        display_results(args.symbol, args.exchange, result)
+        display_results(symbol, market, result)
     else:
         logger.error("Backtest failed to produce results")
 
@@ -208,36 +213,28 @@ def run_optimization(args) -> None:
     """Run strategy optimization with given arguments"""
     from stockscan.strategies.optimizer import StrategyOptimizer
     
-    logger.info(f"Running optimization for {args.strategy} on {args.symbols}")
+    # Normalize symbols to a list
+    if isinstance(args.symbols, list):
+        symbols = args.symbols
+    elif isinstance(args.symbols, str):
+        symbols = args.symbols.split(',')
+    else:
+        logger.error(f"Invalid symbols format: {args.symbols}")
+        return
     
+    logger.info(f"Running optimization for {args.strategy} on {symbols[0]}")
+
     # Load strategy class
-    strategy_name = args.strategy
     try:
-        strategy_map = {
-            'macd': 'src.strategies.macd',
-            'multi_indicator': 'src.strategies.multi_indicator_strategy',
-            'crossover': 'src.strategies.crossover',
-            'combined_signal': 'src.strategies.combined_signal',
-            'advanced_multi': 'src.strategies.advanced_multi_strategy',
-            'optimized_multi': 'src.strategies.optimized_multi_strategy'
-        }
+        strategy_module = importlib.import_module(f"stockscan.strategies.{args.strategy}")
+        strategy_name = args.strategy.replace('_', ' ')
+        strategy_class_name = ''.join(word.capitalize() for word in strategy_name.split()) + 'Strategy'
         
-        if strategy_name not in strategy_map:
-            logger.error(f"Unknown strategy: {strategy_name}")
-            logger.info(f"Available strategies: {', '.join(strategy_map.keys())}")
-            return
-            
-        module_name = strategy_map[strategy_name]
-        class_name = ''.join(word.capitalize() for word in strategy_name.split('_')) + 'Strategy'
-        
-        # Import the module dynamically
-        module = __import__(module_name, fromlist=[class_name])
-        strategy_class = getattr(module, class_name)
+        strategy_class = getattr(strategy_module, strategy_class_name)
         
         # Load data for first symbol for parameter grid
-        symbols = args.symbols.split(',')
         data_loader = ExchangeDataLoader()
-        data = data_loader.load_stock_data(args.exchange, symbols[0])
+        data = data_loader.load_stock_data(args.market, symbols[0])
         
         if data is None or len(data) < 100:
             logger.error(f"Insufficient data for optimization: {symbols[0]}")
@@ -248,41 +245,31 @@ def run_optimization(args) -> None:
         
         if not param_grid:
             # Use default parameter grid for supported strategies
-            if strategy_name == 'macd':
+            if args.strategy == 'macd':
                 param_grid = {
                     'fast_period': [8, 12, 14],
                     'slow_period': [21, 26, 30],
                     'signal_period': [7, 9, 11],
                     'rsi_period': [7, 14, 21],
+                    'rsi_overbought': [65, 70, 75],
+                    'rsi_oversold': [25, 30, 35],
                     'volume_ma_period': [5, 10, 20]
                 }
-            elif strategy_name == 'multi_indicator':
-                param_grid = {
-                    'sma_short_period': [8, 10, 20],
-                    'sma_long_period': [40, 50, 60],
-                    'ema_short_period': [10, 12, 15],
-                    'ema_long_period': [20, 26, 30],
-                    'rsi_period': [7, 14, 21],
-                    'bb_period': [15, 20, 25],
-                    'bb_std': [1.8, 2.0, 2.2],
-                    'macd_fast': [8, 12, 14],
-                    'macd_slow': [21, 26, 30],
-                    'macd_signal': [7, 9, 11]
-                }
             else:
-                logger.warning(f"No parameter grid defined for {strategy_name}, using empty grid")
+                logger.warning(f"No parameter grid defined for {args.strategy}, using empty grid")
         
         # Create optimizer
+        n_trials = args.n_trials if hasattr(args, 'n_trials') else (args.iterations if hasattr(args, 'iterations') else 10)
         optimizer = StrategyOptimizer(
             strategy_class=strategy_class,
             param_grid=param_grid,
             data=data,
             train_size=0.7,
-            metric=args.metric
+            metric=args.metric if hasattr(args, 'metric') else 'sharpe_ratio'
         )
         
         # Run optimization
-        results = optimizer.optimize(iterations=args.iterations, initial_capital=100000)
+        results = optimizer.optimize(iterations=n_trials, initial_capital=100000)
         
         if results['best_params']:
             # Save results
@@ -299,17 +286,25 @@ def run_optimization(args) -> None:
             report = optimizer.get_optimization_report()
             report.to_csv(report_file)
             
-            logger.info(f"Optimization results:")
+            # Display optimization results
+            logger.info("Optimization results:")
             logger.info(f"Best parameters: {results['best_params']}")
-            logger.info(f"Best {args.metric}: {results['best_train_score']:.4f}")
-            logger.info(f"Test {args.metric}: {results['best_test_score']:.4f}")
+            metric_name = args.metric if hasattr(args, 'metric') else 'sharpe_ratio'
+            logger.info(f"Best {metric_name}: {results['best_train_score']:.4f}")
+            
+            # Only display test score if it exists
+            if results.get('best_test_score') is not None:
+                logger.info(f"Test {metric_name}: {results['best_test_score']:.4f}")
+            else:
+                logger.info(f"Test {metric_name}: Not available")
+            
             logger.info(f"Parameters saved to {params_file}")
             logger.info(f"Optimization report saved to {report_file}")
             
             # Run backtest with optimized parameters
             logger.info("Running backtest with optimized parameters...")
             for symbol in symbols:
-                data = data_loader.load_stock_data(args.exchange, symbol)
+                data = data_loader.load_stock_data(args.market, symbol)
                 if data is None or len(data) < 50:
                     logger.warning(f"Skipping {symbol}: insufficient data")
                     continue
@@ -324,7 +319,7 @@ def run_optimization(args) -> None:
                 )
                 
                 if backtest_result:
-                    display_results(symbol, args.exchange, backtest_result)
+                    display_results(symbol, args.market, backtest_result)
         else:
             logger.error("Optimization failed to find valid parameters")
             
@@ -333,22 +328,20 @@ def run_optimization(args) -> None:
 
 
 def run_scan(args) -> None:
-    """Run scanner with given arguments"""
-    from stockscan.scanner import StockScanner
-    
-    exchanges = ['NYSE', 'NASDAQ', 'ASX', 'HKEX'] if args.exchange == 'ALL' else [args.exchange]
-    logger.info(f"Running scan for exchanges: {', '.join(exchanges)}")
+    """Run stock scanner with given arguments"""
+    logger.info(f"Running scan with {args.strategy} strategy")
     
     # Load strategy
-    strategy = load_strategy(args.strategy)
+    strategy = load_strategy(args.strategy, args.params_file)
     if not strategy:
         return
+        
+    from stockscan.scanner.stock_scanner import StockScanner
     
-    # Configure scanner
+    # Prepare scanner config
+    exchanges = ['NYSE', 'NASDAQ', 'ASX', 'HKEX'] if args.market == 'ALL' else [args.market]
+    
     config = {
-        'data_dir': 'data',
-        'output_dir': 'output/scan',
-        'strategies': [strategy],
         'exchanges': exchanges,
         'limit': args.limit
     }

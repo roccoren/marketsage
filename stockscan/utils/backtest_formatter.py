@@ -99,162 +99,204 @@ def generate_plots(symbol: str, exchange: str, result: Any, show_plots: bool = T
     output_dir : str, optional
         Output directory for plots, by default "output/backtest/plots"
     """
-    # Setup plot output directory
-    if save_plots:
-        output_path = Path(output_dir) if output_dir else Path("output/backtest/plots")
-        output_path.mkdir(parents=True, exist_ok=True)
-    
-    # Get equity curve and trade data
-    equity_curve = result.equity_curve if hasattr(result, 'equity_curve') else None
-    trades = result.trades if hasattr(result, 'trades') else None
-    signals = result.signals if hasattr(result, 'signals') else None
-    
-    if equity_curve is None or len(equity_curve) == 0:
-        logger.warning("No equity curve data available for plotting")
-        return
-    
-    # Set plot style and figure size
-    plt.style.use('seaborn-v0_8-darkgrid')
-    
-    # 1. Equity Curve and Drawdown
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]})
-    
-    # Plot equity curve
-    ax1.plot(equity_curve.index, equity_curve['equity'], label='Strategy', linewidth=2)
-    
-    # If we have a benchmark, plot it
-    if 'benchmark' in equity_curve.columns:
-        ax1.plot(equity_curve.index, equity_curve['benchmark'], label='Buy & Hold', 
-                 linewidth=1.5, linestyle='--', alpha=0.7)
-    
-    # Add markers for trades if available
-    if trades is not None and len(trades) > 0:
-        entries = pd.DataFrame(trades)
-        entries = entries[entries['type'] == 'entry']
-        exits = pd.DataFrame(trades)
-        exits = exits[exits['type'] == 'exit']
-        
-        for _, trade in entries.iterrows():
-            if 'date' in trade and 'price' in trade:
-                ax1.plot(trade['date'], trade['price'], 'g^', markersize=8)
-        
-        for _, trade in exits.iterrows():
-            if 'date' in trade and 'price' in trade:
-                ax1.plot(trade['date'], trade['price'], 'rv', markersize=8)
-    
-    # Plot drawdowns
-    if 'drawdown' in equity_curve.columns:
-        ax2.fill_between(equity_curve.index, 0, -equity_curve['drawdown'], color='red', alpha=0.3)
-        ax2.set_ylabel('Drawdown (%)')
-        ax2.set_ylim(min(-equity_curve['drawdown'].max() * 1.1, -1), 1)  # Set some padding
-    
-    # Configure axis labels and title
-    ax1.set_ylabel('Portfolio Value ($)')
-    ax1.set_title(f'Equity Curve - {symbol} ({exchange})')
-    ax1.legend()
-    ax1.grid(True)
-    ax2.grid(True)
-    
-    # Format x-axis dates
-    fig.autofmt_xdate()
-    
-    # Save plot if requested
-    if save_plots:
-        fig.savefig(output_path / f"{symbol}_equity_curve.png", dpi=300, bbox_inches='tight')
-    
-    # 2. Return Distribution
-    if 'returns' in equity_curve.columns:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        # Plot return distribution
-        returns = equity_curve['returns'].dropna()
-        ax.hist(returns, bins=50, alpha=0.75, color='blue')
-        
-        # Add vertical line for mean return
-        mean_return = returns.mean()
-        ax.axvline(mean_return, color='red', linestyle='dashed', linewidth=2, label=f'Mean: {mean_return:.4f}')
-        
-        # Add normal distribution fit
-        import scipy.stats as stats
-        x = np.linspace(returns.min(), returns.max(), 100)
-        y = stats.norm.pdf(x, returns.mean(), returns.std())
-        # Scale to match histogram height
-        hist, bins = np.histogram(returns, bins=50)
-        scale = max(hist) / max(y)
-        ax.plot(x, y * scale, 'r-', linewidth=2, label='Normal Distribution Fit')
-        
-        ax.set_title(f'Return Distribution - {symbol} ({exchange})')
-        ax.set_xlabel('Daily Return')
-        ax.set_ylabel('Frequency')
-        ax.legend()
-        ax.grid(True)
-        
+    try:
+        # Setup plot output directory
         if save_plots:
-            fig.savefig(output_path / f"{symbol}_return_distribution.png", dpi=300, bbox_inches='tight')
-    
-    # 3. Rolling Metrics (Sharpe, Volatility)
-    if 'returns' in equity_curve.columns:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+            output_path = Path(output_dir) if output_dir else Path("output/backtest/plots")
+            output_path.mkdir(parents=True, exist_ok=True)
         
-        # Calculate rolling metrics
-        window = min(252, len(equity_curve) // 4)  # Use 1 year window or quarter of data
-        if window > 20:  # Only calculate if we have enough data
-            rolling_sharpe = returns.rolling(window=window).apply(lambda x: (x.mean() / x.std()) * np.sqrt(252), raw=True)
-            rolling_vol = returns.rolling(window=window).std() * np.sqrt(252)
+        # Get equity curve and trade data
+        if hasattr(result, 'equity_curve'):
+            # Ensure equity_curve is a DataFrame
+            if isinstance(result.equity_curve, pd.Series):
+                equity_curve = pd.DataFrame({'equity': result.equity_curve})
+            else:
+                equity_curve = result.equity_curve
+        else:
+            logger.warning("No equity curve data available for plotting")
+            return
+        
+        trades = result.trades if hasattr(result, 'trades') else None
+        signals = result.signals if hasattr(result, 'signals') else None
+        
+        if equity_curve is None or len(equity_curve) == 0:
+            logger.warning("No equity curve data available for plotting")
+            return
+        
+        # Set plot style and figure size
+        plt.style.use('seaborn-v0_8-darkgrid')
+        
+        try:
+            # 1. Equity Curve and Drawdown
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]})
             
-            # Plot rolling Sharpe ratio
-            ax1.plot(rolling_sharpe.index, rolling_sharpe, linewidth=2)
-            ax1.axhline(y=1, color='r', linestyle='--', alpha=0.7)
-            ax1.axhline(y=2, color='g', linestyle='--', alpha=0.7)
-            ax1.set_ylabel('Rolling Sharpe Ratio')
-            ax1.set_title(f'Rolling {window}-day Sharpe Ratio - {symbol} ({exchange})')
+            # Plot equity curve
+            ax1.plot(equity_curve.index, equity_curve['equity'], label='Strategy', linewidth=2)
             
-            # Plot rolling volatility
-            ax2.plot(rolling_vol.index, rolling_vol * 100, linewidth=2, color='orange')  # Convert to percentage
-            ax2.set_ylabel('Annualized Volatility (%)')
-            ax2.set_title(f'Rolling {window}-day Volatility - {symbol} ({exchange})')
-        
-        # Format x-axis dates
-        fig.autofmt_xdate()
-        
-        if save_plots:
-            fig.savefig(output_path / f"{symbol}_rolling_metrics.png", dpi=300, bbox_inches='tight')
-    
-    # 4. Trade Analysis
-    if trades is not None and len(trades) > 0:
-        trades_df = pd.DataFrame(trades)
-        
-        if 'pnl' in trades_df.columns:
-            # Only use exit trades for PnL
-            exit_trades = trades_df[trades_df['type'] == 'exit'].copy()
+            # If we have a benchmark, plot it
+            if 'benchmark' in equity_curve.columns:
+                ax1.plot(equity_curve.index, equity_curve['benchmark'], label='Buy & Hold', 
+                        linewidth=1.5, linestyle='--', alpha=0.7)
             
-            if len(exit_trades) > 0:
-                fig, ax = plt.subplots(figsize=(12, 6))
+            # Add markers for trades if available
+            if trades is not None and len(trades) > 0:
+                try:
+                    trades_df = pd.DataFrame(trades) if isinstance(trades, list) else trades
+                    logger.info(f"Trade columns: {trades_df.columns.tolist()}")
+                    
+                    # Check for entry/exit dates
+                    if 'EntryDate' in trades_df.columns and 'EntryPrice' in trades_df.columns:
+                        for _, trade in trades_df.iterrows():
+                            if pd.notna(trade['EntryDate']) and pd.notna(trade['EntryPrice']):
+                                ax1.plot(trade['EntryDate'], trade['EntryPrice'], 'g^', markersize=8)
+                    
+                    if 'ExitDate' in trades_df.columns and 'ExitPrice' in trades_df.columns:
+                        for _, trade in trades_df.iterrows():
+                            if pd.notna(trade['ExitDate']) and pd.notna(trade['ExitPrice']):
+                                ax1.plot(trade['ExitDate'], trade['ExitPrice'], 'rv', markersize=8)
+                except Exception as e:
+                    logger.error(f"Error plotting trade markers: {str(e)}")
+            
+            # Calculate and plot drawdowns
+            try:
+                # First calculate the running maximum
+                running_max = equity_curve['equity'].expanding().max()
+                # Calculate drawdown in percentage terms
+                drawdown = (equity_curve['equity'] / running_max - 1.0) * 100
+                ax2.fill_between(equity_curve.index, 0, drawdown, color='red', alpha=0.3)
+                ax2.set_ylabel('Drawdown (%)')
+                ax2.set_ylim(min(drawdown.min() * 1.1, -1), 1)  # Set some padding
+            except Exception as e:
+                logger.error(f"Error calculating drawdowns: {str(e)}")
+            
+            # Configure axis labels and title
+            ax1.set_ylabel('Portfolio Value ($)')
+            ax1.set_title(f'Equity Curve - {symbol} ({exchange})')
+            ax1.legend()
+            ax1.grid(True)
+            ax2.grid(True)
+            
+            # Format x-axis dates
+            fig.autofmt_xdate()
+            
+            # Save plot if requested
+            if save_plots:
+                fig.savefig(output_path / f"{symbol}_equity_curve.png", dpi=300, bbox_inches='tight')
+        except Exception as e:
+            logger.error(f"Error generating equity curve plot: {str(e)}")
+        
+        try:
+            # 2. Return Distribution
+            # Calculate returns from equity curve
+            returns = equity_curve['equity'].pct_change().dropna()
+            
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            # Plot return distribution
+            ax.hist(returns, bins=50, alpha=0.75, color='blue')
+            
+            # Add vertical line for mean return
+            mean_return = returns.mean()
+            ax.axvline(mean_return, color='red', linestyle='dashed', linewidth=2, label=f'Mean: {mean_return:.4f}')
+            
+            # Add normal distribution fit
+            import scipy.stats as stats
+            x = np.linspace(returns.min(), returns.max(), 100)
+            y = stats.norm.pdf(x, returns.mean(), returns.std())
+            # Scale to match histogram height
+            hist, bins = np.histogram(returns, bins=50)
+            scale = max(hist) / max(y) if max(y) > 0 else 1
+            ax.plot(x, y * scale, 'r-', linewidth=2, label='Normal Distribution Fit')
+            
+            ax.set_title(f'Return Distribution - {symbol} ({exchange})')
+            ax.set_xlabel('Daily Return')
+            ax.set_ylabel('Frequency')
+            ax.legend()
+            ax.grid(True)
+            
+            if save_plots:
+                fig.savefig(output_path / f"{symbol}_return_distribution.png", dpi=300, bbox_inches='tight')
+        except Exception as e:
+            logger.error(f"Error generating return distribution plot: {str(e)}")
+        
+        try:
+            # 3. Rolling Metrics (Sharpe, Volatility)
+            # Calculate window size for rolling metrics
+            window = min(252, len(equity_curve) // 4)  # Use 1 year window or quarter of data
+            if window > 20:  # Only calculate if we have enough data
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
                 
-                # Plot trade PnL as bars
-                bars = ax.bar(range(len(exit_trades)), exit_trades['pnl'], 
-                             color=exit_trades['pnl'].apply(lambda x: 'green' if x > 0 else 'red'))
+                # Calculate rolling metrics
+                rolling_sharpe = returns.rolling(window=window).apply(lambda x: (x.mean() / x.std()) * np.sqrt(252), raw=True)
+                rolling_vol = returns.rolling(window=window).std() * np.sqrt(252)
                 
-                # Add horizontal line at zero
-                ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                # Plot rolling Sharpe ratio
+                ax1.plot(rolling_sharpe.index, rolling_sharpe, linewidth=2)
+                ax1.axhline(y=1, color='r', linestyle='--', alpha=0.7)
+                ax1.axhline(y=2, color='g', linestyle='--', alpha=0.7)
+                ax1.set_ylabel('Rolling Sharpe Ratio')
+                ax1.set_title(f'Rolling {window}-day Sharpe Ratio - {symbol} ({exchange})')
                 
-                # Label axes
-                ax.set_xlabel('Trade Number')
-                ax.set_ylabel('Profit/Loss ($)')
-                ax.set_title(f'Individual Trade Performance - {symbol} ({exchange})')
+                # Plot rolling volatility
+                ax2.plot(rolling_vol.index, rolling_vol * 100, linewidth=2, color='orange')  # Convert to percentage
+                ax2.set_ylabel('Annualized Volatility (%)')
+                ax2.set_title(f'Rolling {window}-day Volatility - {symbol} ({exchange})')
                 
-                # Add cumulative sum
-                if len(exit_trades) > 1:
-                    ax2 = ax.twinx()
-                    cumulative = exit_trades['pnl'].cumsum()
-                    ax2.plot(range(len(exit_trades)), cumulative, 'k--', linewidth=2)
-                    ax2.set_ylabel('Cumulative P&L ($)')
+                # Format x-axis dates
+                fig.autofmt_xdate()
                 
                 if save_plots:
-                    fig.savefig(output_path / f"{symbol}_trade_pnl.png", dpi=300, bbox_inches='tight')
-    
-    # Show plots if requested
-    if show_plots:
-        plt.show()
-    else:
-        plt.close('all')
+                    fig.savefig(output_path / f"{symbol}_rolling_metrics.png", dpi=300, bbox_inches='tight')
+        except Exception as e:
+            logger.error(f"Error generating rolling metrics plot: {str(e)}")
+        
+        try:
+            # 4. Trade Analysis
+            if trades is not None and len(trades) > 0:
+                # Convert to DataFrame if it's a list
+                trades_df = pd.DataFrame(trades) if isinstance(trades, list) else trades
+                
+                # Check if we have PnL data
+                if any(col in trades_df.columns for col in ['pnl', 'PnL']):
+                    # Normalize column name
+                    pnl_col = next((col for col in ['PnL', 'pnl'] if col in trades_df.columns), None)
+                    
+                    # Filter completed trades (those with exit information)
+                    completed_trades = trades_df.dropna(subset=['ExitDate']) if 'ExitDate' in trades_df.columns else trades_df
+                    
+                    if len(completed_trades) > 0:
+                        fig, ax = plt.subplots(figsize=(12, 6))
+                        
+                        # Plot trade PnL as bars
+                        bars = ax.bar(range(len(completed_trades)), completed_trades[pnl_col], 
+                                    color=completed_trades[pnl_col].apply(lambda x: 'green' if x > 0 else 'red'))
+                        
+                        # Add horizontal line at zero
+                        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                        
+                        # Label axes
+                        ax.set_xlabel('Trade Number')
+                        ax.set_ylabel('Profit/Loss ($)')
+                        ax.set_title(f'Individual Trade Performance - {symbol} ({exchange})')
+                        
+                        # Add cumulative sum
+                        if len(completed_trades) > 1:
+                            ax2 = ax.twinx()
+                            cumulative = completed_trades[pnl_col].cumsum()
+                            ax2.plot(range(len(completed_trades)), cumulative, 'k--', linewidth=2)
+                            ax2.set_ylabel('Cumulative P&L ($)')
+                        
+                        if save_plots:
+                            fig.savefig(output_path / f"{symbol}_trade_pnl.png", dpi=300, bbox_inches='tight')
+        except Exception as e:
+            logger.error(f"Error generating trade analysis plot: {str(e)}")
+        
+        # Show plots if requested
+        if show_plots:
+            plt.show()
+        else:
+            plt.close('all')
+    except Exception as e:
+        logger.exception(f"Error in generate_plots: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())

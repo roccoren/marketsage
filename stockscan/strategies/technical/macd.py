@@ -1,11 +1,15 @@
+"""
+MACD strategy implementation - technical directory version
+"""
+
 import pandas as pd
 from datetime import datetime
-from strategies.macd import MACDStrategy
-from strategies.backtester import Backtester
-from utils.exchange_data_loader import ExchangeDataLoader
+from stockscan.strategies.macd import MacdStrategy
+from stockscan.strategies.backtester import Backtester
+from stockscan.utils.exchange_data_loader import ExchangeDataLoader
 import json
 import os
-from utils.backtest_formatter import display_results
+from stockscan.utils.backtest_formatter import display_results
 
 def load_symbols():
     """Load symbols from exchange listing files."""
@@ -39,7 +43,7 @@ def run_backtest(exchange: str, symbol: str, data_loader: ExchangeDataLoader):
         return
     
     try:
-        strategy = MACDStrategy()
+        strategy = MacdStrategy()
         backtester = Backtester(strategy)
         result = backtester.run(data)
         

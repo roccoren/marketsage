@@ -8,7 +8,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 
-from src.utils.technical_indicators import TechnicalIndicators
+from stockscan.utils.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -37,66 +37,53 @@ class Strategy:
     
     def prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Prepare and validate OHLCV data for analysis.
+        Prepare data for analysis
         
         Parameters:
         -----------
         data : pd.DataFrame
-            Raw OHLCV data
+            Raw price data
             
         Returns:
         --------
         pd.DataFrame
-            Prepared and validated data
-            
-        Raises:
-        -------
-        ValueError
-            If required columns are missing or data format is invalid
+            Processed data
         """
-        if data is None or len(data) == 0:
-            raise ValueError("No data provided")
+        # Make a copy to avoid modifying original
+        df = data.copy()
         
-        # Make a copy to avoid modifying the original
-        data = data.copy()
+        # Convert date index if it's not already datetime
+        if not pd.api.types.is_datetime64_any_dtype(df.index):
+            try:
+                df.index = pd.to_datetime(df.index, utc=True)
+            except Exception as e:
+                raise ValueError(f"Failed to convert index to datetime: {str(e)}")
         
         # Check required columns
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
         
         # Convert column names to title case if they're lowercase or uppercase
-        if not all(col in data.columns for col in required_columns):
-            data.columns = [col.title() if col.lower() in [rc.lower() for rc in required_columns] else col 
-                           for col in data.columns]
+        if not all(col in df.columns for col in required_columns):
+            df.columns = [col.title() if col.lower() in [rc.lower() for rc in required_columns] else col 
+                           for col in df.columns]
         
         # Check again after conversion
-        missing_columns = [col for col in required_columns if col not in data.columns]
+        missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
         
-        # Ensure index is datetime
-        if not isinstance(data.index, pd.DatetimeIndex):
-            try:
-                if 'Date' in data.columns:
-                    data['Date'] = pd.to_datetime(data['Date'])
-                    data.set_index('Date', inplace=True)
-                else:
-                    # Try to convert the existing index
-                    data.index = pd.to_datetime(data.index)
-            except Exception as e:
-                raise ValueError(f"Failed to convert index to datetime: {str(e)}")
-        
         # Sort by date
-        data = data.sort_index()
+        df = df.sort_index()
         
         # Handle missing data
-        data = data.dropna(subset=['Close'])
+        df = df.dropna(subset=['Close'])
         
         # Fill remaining NaN values
         for col in ['Open', 'High', 'Low']:
-            data[col] = data[col].fillna(data['Close'])
-        data['Volume'] = data['Volume'].fillna(0)
+            df[col] = df[col].fillna(df['Close'])
+        df['Volume'] = df['Volume'].fillna(0)
         
-        return data
+        return df
     
     def calculate_indicators(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
         """

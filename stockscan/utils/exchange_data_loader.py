@@ -41,32 +41,70 @@ class ExchangeDataLoader:
             DataFrame with historical data or None if data is invalid/missing
         """
         try:
-            # Construct file path
-            file_path = os.path.join(self.base_dir, exchange, f"{symbol}.json")
+            # First, try to load from the exchange-specific directory (JSON format)
+            file_path = os.path.join(self.base_dir, exchange.lower(), f"{symbol}.json")
             
             # Check if file exists
-            if not os.path.exists(file_path):
+            if os.path.exists(file_path):
+                # Load JSON data
+                with open(file_path, 'r') as f:
+                    try:
+                        data = json.load(f)
+                        logger.debug(f"Successfully loaded JSON data from {file_path}")
+                        
+                        # Convert to DataFrame based on the data structure
+                        df = self._convert_to_dataframe(data, file_path)
+                        if df is not None:
+                            # Process and validate DataFrame
+                            return self._process_dataframe(df)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Error decoding JSON from {file_path}")
+            else:
                 logger.warning(f"Data file not found: {file_path}")
-                return None
-                
-            # Load JSON data
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-                logger.debug(f"Successfully loaded JSON data from {file_path}")
-                
-            # Convert to DataFrame based on the data structure
-            df = self._convert_to_dataframe(data, file_path)
-            if df is None:
-                return None
-                
-            # Process and validate DataFrame
-            return self._process_dataframe(df)
             
-        except json.JSONDecodeError:
-            logger.error(f"Error decoding JSON from {file_path}")
+            # If we didn't successfully load from the exchange directory,
+            # try to load from the market_data directory (CSV format)
+            market_data_paths = [
+                os.path.join(self.base_dir, "market_data", "1d", "raw", f"{symbol}.csv"),
+                os.path.join(self.base_dir, "market", "1d", "raw", f"{symbol}.csv"),
+                os.path.join("data", "market_data", "1d", "raw", f"{symbol}.csv"),
+                os.path.join("data", "market", "1d", "raw", f"{symbol}.csv")
+            ]
+            
+            for csv_path in market_data_paths:
+                if os.path.exists(csv_path):
+                    logger.info(f"Loading CSV data from {csv_path}")
+                    try:
+                        df = pd.read_csv(csv_path)
+                        
+                        # Process the CSV format data
+                        if 'date' in df.columns:
+                            # Handle date column
+                            df['date'] = pd.to_datetime(df['date'], utc=True)
+                            
+                            # Make sure all column names are lowercase
+                            df.columns = [col.lower() for col in df.columns]
+                            
+                            # Make sure we have all required columns
+                            required_cols = ['open', 'high', 'low', 'close', 'volume']
+                            if all(col in df.columns for col in required_cols):
+                                # Sort by date
+                                df = df.sort_values('date')
+                                
+                                # Add some debugging info
+                                logger.info(f"Loaded {len(df)} rows of data for {symbol}")
+                                logger.info(f"Columns: {list(df.columns)}")
+                                
+                                return df
+                            else:
+                                logger.warning(f"Missing required columns in {csv_path}")
+                    except Exception as e:
+                        logger.warning(f"Error loading CSV from {csv_path}: {str(e)}")
+            
+            logger.warning(f"No data found for {symbol} in any location")
             return None
         except Exception as e:
-            logger.error(f"Error loading data for {symbol} from {exchange}: {str(e)}", exc_info=True)
+            logger.error(f"Error loading data for {symbol}: {str(e)}")
             return None
     
     def _convert_to_dataframe(self, data: Any, file_path: str) -> Optional[pd.DataFrame]:

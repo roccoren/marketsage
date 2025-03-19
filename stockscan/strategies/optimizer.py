@@ -14,7 +14,7 @@ import time
 from sklearn.model_selection import train_test_split
 import random
 
-from src.strategies.backtester import Backtester
+from stockscan.strategies.backtester import Backtester
 
 logger = logging.getLogger(__name__)
 

@@ -72,8 +72,78 @@ class BacktestResult:
         metrics['net_profit_pct'] = (metrics['net_profit'] / self.initial_capital) * 100
         metrics['annualized_return_pct'] = self._calculate_annualized_return(self.equity_curve) * 100
         
-        # Risk metrics
-        metrics['max_drawdown_pct'] = self._calculate_max_drawdown(self.equity_curve) * 100
+        # Calculate buy and hold returns
+        if hasattr(self, 'symbol') and self.symbol is not None:
+            # Calculate buy & hold return if we have price data
+            if len(self.equity_curve) > 1:
+                try:
+                    # Calculate buy & hold return based on underlying price data
+                    # Get the first and last price points
+                    first_price = self.trades[0]['EntryPrice'] if self.trades else 0
+                    last_price = self.trades[-1]['ExitPrice'] if self.trades and 'ExitPrice' in self.trades[-1] else 0
+                    
+                    if first_price > 0 and last_price > 0:
+                        buy_hold_return = last_price / first_price - 1
+                        metrics['buy_hold_return'] = buy_hold_return * self.initial_capital
+                        metrics['buy_hold_return_pct'] = buy_hold_return * 100
+                        
+                        # Calculate alpha and beta if we have a benchmark
+                        if len(returns) > 1:
+                            # Simple alpha/beta calculation
+                            # Alpha = strategy return - risk_free_rate - beta * (market_return - risk_free_rate)
+                            # For simplicity, we'll use 0 as risk-free rate
+                            strategy_return = metrics['annualized_return_pct'] / 100
+                            market_return = buy_hold_return * 252 / len(self.equity_curve)  # Annualized
+                            
+                            # Calculate beta using covariance/variance if possible
+                            if abs(market_return) > 0:
+                                # Simple beta approximation
+                                beta = strategy_return / market_return if market_return != 0 else 1
+                                metrics['beta'] = min(max(beta, -10), 10)  # Limit to reasonable range
+                                
+                                # Calculate alpha
+                                metrics['alpha'] = strategy_return - metrics['beta'] * market_return
+                            else:
+                                metrics['beta'] = 0
+                                metrics['alpha'] = 0
+                    else:
+                        metrics['buy_hold_return'] = 0
+                        metrics['buy_hold_return_pct'] = 0
+                        metrics['alpha'] = 0
+                        metrics['beta'] = 0
+                except (IndexError, KeyError) as e:
+                    logger.warning(f"Could not calculate buy & hold returns: {str(e)}")
+                    metrics['buy_hold_return'] = 0
+                    metrics['buy_hold_return_pct'] = 0
+                    metrics['alpha'] = 0
+                    metrics['beta'] = 0
+            else:
+                metrics['buy_hold_return'] = 0
+                metrics['buy_hold_return_pct'] = 0
+                metrics['alpha'] = 0
+                metrics['beta'] = 0
+        else:
+            metrics['buy_hold_return'] = 0
+            metrics['buy_hold_return_pct'] = 0
+            metrics['alpha'] = 0
+            metrics['beta'] = 0
+        
+        # Risk metrics - calculate drawdown and duration
+        max_dd, max_dd_duration = self._calculate_max_drawdown_with_duration(self.equity_curve)
+        metrics['max_drawdown'] = max_dd * 100  # Convert to percentage
+        metrics['max_drawdown_duration'] = max_dd_duration
+        
+        # Calculate Calmar ratio (annualized return / max drawdown)
+        if max_dd > 0:
+            metrics['calmar_ratio'] = (metrics['annualized_return_pct'] / 100) / max_dd
+        else:
+            metrics['calmar_ratio'] = 0
+            
+        # Calculate Recovery Factor (net profit / max drawdown)
+        if max_dd > 0 and self.initial_capital > 0:
+            metrics['recovery_factor'] = metrics['net_profit'] / (max_dd * self.initial_capital)
+        else:
+            metrics['recovery_factor'] = 0
         
         # Win/loss metrics
         winning_trades = [t for t in self.trades if t.get('PnL', 0) > 0]
@@ -110,6 +180,13 @@ class BacktestResult:
             metrics['profit_factor'] = total_gross_profit / total_gross_loss
         else:
             metrics['profit_factor'] = float('inf') if total_gross_profit > 0 else 0
+            
+        # Calculate expectancy: (win_rate * avg_win - (1 - win_rate) * avg_loss) / abs(avg_loss)
+        if metrics['avg_loss'] != 0 and metrics['total_trades'] > 0:
+            metrics['expectancy'] = (metrics['win_rate'] * metrics['avg_win'] - 
+                                   (1 - metrics['win_rate']) * abs(metrics['avg_loss'])) / abs(metrics['avg_loss'])
+        else:
+            metrics['expectancy'] = 0
         
         # Calculate risk-adjusted metrics
         if len(returns) > 1:
@@ -150,12 +227,18 @@ class BacktestResult:
     
     def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
         """Calculate maximum drawdown percentage"""
+        if len(equity_curve) <= 1:
+            return 0
+            
         # Running maximum
         running_max = equity_curve.expanding().max()
+        
         # Drawdown in percentage terms
         drawdown = (equity_curve / running_max - 1)
+        
         # Maximum drawdown
         max_drawdown = drawdown.min()
+        
         return abs(max_drawdown) if not np.isnan(max_drawdown) else 0
     
     def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.0) -> float:
@@ -200,6 +283,56 @@ class BacktestResult:
             return annualized_return
         else:
             return 0
+
+    def _calculate_max_drawdown_with_duration(self, equity_curve: pd.Series) -> tuple:
+        """
+        Calculate maximum drawdown percentage and its duration
+        
+        Returns:
+            Tuple of (max_drawdown, max_drawdown_duration)
+        """
+        if len(equity_curve) <= 1:
+            return 0, 0
+            
+        # Running maximum
+        running_max = equity_curve.expanding().max()
+        
+        # Drawdown in percentage terms
+        drawdown = (equity_curve / running_max - 1)
+        
+        # Find the max drawdown and its duration
+        max_drawdown = drawdown.min()
+        
+        if np.isnan(max_drawdown) or max_drawdown >= 0:
+            return 0, 0
+            
+        # Find the duration of the max drawdown
+        # This is calculated as the time between the peak and the recovery
+        # to the previous peak
+        
+        # First find the peak before the max drawdown
+        if drawdown.idxmin() and running_max.loc[drawdown.idxmin()]:
+            # Find the date of the peak
+            peak_date = running_max.loc[:drawdown.idxmin()].idxmax()
+            
+            # Find the recovery date - first date after the trough where equity returns to the peak value
+            # Use the index to filter only values after the trough
+            after_trough = equity_curve.loc[drawdown.idxmin():]
+            
+            # Find indices where the equity reaches or exceeds the peak
+            recovery_indices = after_trough[after_trough >= running_max.loc[peak_date]].index
+            
+            if len(recovery_indices) > 0:
+                # The first such index is the recovery
+                recovery_date = recovery_indices[0]
+                duration = (recovery_date - peak_date).days
+            else:
+                # If no recovery, use the last date in the data
+                duration = (equity_curve.index[-1] - peak_date).days
+        else:
+            duration = 0
+            
+        return abs(max_drawdown), duration
 
 class Backtester:
     """
@@ -258,15 +391,44 @@ class Backtester:
         Returns:
             BacktestResult object containing backtest results
         """
+        # Make a copy to avoid modifying original data
+        df = data.copy()
+        
+        # Ensure date column is datetime and set as index if needed
+        if df.index.name != 'date' and 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], utc=True)
+            df = df.set_index('date')
+        
+        # Standardize column names
+        df.columns = [col.lower() for col in df.columns]
+        
+        # Make sure required columns exist
+        required_columns = ['open', 'high', 'low', 'close', 'volume']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            logger.error(f"Missing required columns in data: {missing_columns}")
+            return None
+            
+        # Add uppercase versions for backward compatibility
+        df['Open'] = df['open']
+        df['High'] = df['high']
+        df['Low'] = df['low']
+        df['Close'] = df['close']
+        df['Volume'] = df['volume']
+        
         # Prepare the data
-        df = self.strategy.prepare_data(data)
+        df = self.strategy.prepare_data(df)
         
         # Filter date range if specified
         if start_date is not None:
-            df = df[df.index >= pd.Timestamp(start_date)]
+            # Convert to timezone-aware timestamp if needed
+            start_ts = pd.Timestamp(start_date, tz='UTC')
+            df = df[df.index >= start_ts]
             
         if end_date is not None:
-            df = df[df.index <= pd.Timestamp(end_date)]
+            # Convert to timezone-aware timestamp if needed
+            end_ts = pd.Timestamp(end_date, tz='UTC')
+            df = df[df.index <= end_ts]
             
         if df.empty:
             logger.warning("No data available for backtesting after filtering")

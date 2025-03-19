@@ -143,7 +143,7 @@ class TechnicalIndicators:
         Parameters:
         -----------
         data : Union[pd.DataFrame, pd.Series]
-            Price data, either a DataFrame (will use 'Close') or a Series
+            Price data, either a DataFrame (will use 'Close' or 'close') or a Series
         period : int
             Moving average period
             
@@ -153,7 +153,12 @@ class TechnicalIndicators:
             Simple Moving Average series
         """
         if isinstance(data, pd.DataFrame):
-            return data['Close'].rolling(window=period).mean()
+            if 'close' in data.columns:
+                return data['close'].rolling(window=period).mean()
+            elif 'Close' in data.columns:
+                return data['Close'].rolling(window=period).mean()
+            else:
+                raise ValueError("DataFrame must contain 'close' or 'Close' column")
         else:
             return data.rolling(window=period).mean()
     
@@ -165,7 +170,7 @@ class TechnicalIndicators:
         Parameters:
         -----------
         data : Union[pd.DataFrame, pd.Series]
-            Price data, either a DataFrame (will use 'Close') or a Series
+            Price data, either a DataFrame (will use 'Close' or 'close') or a Series
         period : int
             Moving average period
             
@@ -175,19 +180,24 @@ class TechnicalIndicators:
             Exponential Moving Average series
         """
         if isinstance(data, pd.DataFrame):
-            return data['Close'].ewm(span=period, adjust=False).mean()
+            if 'close' in data.columns:
+                return data['close'].ewm(span=period, adjust=False).mean()
+            elif 'Close' in data.columns:
+                return data['Close'].ewm(span=period, adjust=False).mean()
+            else:
+                raise ValueError("DataFrame must contain 'close' or 'Close' column")
         else:
             return data.ewm(span=period, adjust=False).mean()
     
     @staticmethod
-    def rsi(data: pd.DataFrame, period: int = 14) -> pd.Series:
+    def rsi(data: Union[pd.DataFrame, pd.Series], period: int = 14) -> pd.Series:
         """
         Calculate Relative Strength Index
         
         Parameters:
         -----------
-        data : pd.DataFrame
-            OHLCV data with datetime index
+        data : Union[pd.DataFrame, pd.Series]
+            OHLCV data with datetime index, or price series
         period : int, optional
             RSI period, by default 14
             
@@ -196,7 +206,19 @@ class TechnicalIndicators:
         pd.Series
             RSI series
         """
-        delta = data['Close'].diff()
+        # Extract price series if DataFrame is provided
+        if isinstance(data, pd.DataFrame):
+            if 'close' in data.columns:
+                price = data['close']
+            elif 'Close' in data.columns:
+                price = data['Close']
+            else:
+                raise ValueError("DataFrame must contain 'close' or 'Close' column")
+        else:
+            price = data
+            
+        # Calculate price changes
+        delta = price.diff()
         
         # Make two series: one for gains, one for losses
         up = delta.clip(lower=0)
@@ -240,15 +262,15 @@ class TechnicalIndicators:
         return upper_band, middle_band, lower_band
     
     @staticmethod
-    def macd(data: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, 
+    def macd(data: Union[pd.DataFrame, pd.Series], fast_period: int = 12, slow_period: int = 26, 
            signal_period: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
         """
         Calculate Moving Average Convergence Divergence
         
         Parameters:
         -----------
-        data : pd.DataFrame
-            OHLCV data with datetime index
+        data : Union[pd.DataFrame, pd.Series]
+            OHLCV data with datetime index, or price series
         fast_period : int, optional
             Fast EMA period, by default 12
         slow_period : int, optional
@@ -261,9 +283,20 @@ class TechnicalIndicators:
         Tuple[pd.Series, pd.Series, pd.Series]
             MACD line, signal line, histogram
         """
+        # Handle both DataFrame and Series inputs
+        if isinstance(data, pd.DataFrame):
+            if 'close' in data.columns:
+                price_series = data['close']
+            elif 'Close' in data.columns:
+                price_series = data['Close']
+            else:
+                raise ValueError("DataFrame must contain 'close' or 'Close' column")
+        else:
+            price_series = data
+        
         # Calculate EMAs
-        fast_ema = TechnicalIndicators.ema(data, fast_period)
-        slow_ema = TechnicalIndicators.ema(data, slow_period)
+        fast_ema = TechnicalIndicators.ema(price_series, fast_period)
+        slow_ema = TechnicalIndicators.ema(price_series, slow_period)
         
         # Calculate MACD line
         macd_line = fast_ema - slow_ema
