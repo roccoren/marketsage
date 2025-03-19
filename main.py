@@ -18,6 +18,8 @@ from src.market_system.backtesting.data_provider import DataProvider
 from src.market_system.backtesting.portfolio_manager import PortfolioManager
 from src.market_system.backtesting.execution_handler import ExecutionHandler
 from src.market_system.backtesting.strategies import TrendFollowingStrategy
+from src.tools.configure_storage import main as configure_storage
+from src.tools.query_influxdb import main as query_influxdb
 
 
 def setup_logging(verbose=False):
@@ -49,12 +51,38 @@ def parse_args():
     backtest_parser.add_argument('--risk', type=float, default=1.0, help='Risk percentage per trade')
     backtest_parser.add_argument('--fast-ma', type=int, default=20, help='Fast moving average period')
     backtest_parser.add_argument('--slow-ma', type=int, default=50, help='Slow moving average period')
-    backtest_parser.add_argument('--data-dir', default='data/historical', help='Data directory')
-    backtest_parser.add_argument('--output-dir', default='reports/backtest', help='Output directory')
-    backtest_parser.add_argument('--report-name', help='Report name')
     
-    # Common options
-    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
+    # Configure storage
+    storage_parser = subparsers.add_parser('configure-storage', help='Configure data storage backend')
+    storage_parser.add_argument('--use-influxdb', action='store_true', help='Use InfluxDB for data storage')
+    storage_parser.add_argument('--use-file-storage', action='store_true', help='Use file-based storage for data')
+    storage_parser.add_argument('--influxdb-url', help='InfluxDB server URL')
+    storage_parser.add_argument('--influxdb-token', help='InfluxDB authentication token')
+    storage_parser.add_argument('--influxdb-org', help='InfluxDB organization')
+    storage_parser.add_argument('--influxdb-bucket', help='InfluxDB bucket name')
+    
+    # Data fetching commands
+    fetch_parser = subparsers.add_parser('fetch-data', help='Fetch market data')
+    fetch_parser.add_argument('--market', required=True, help='Market to fetch data for (e.g., nyse, nasdaq)')
+    fetch_parser.add_argument('--symbols', nargs='+', help='Specific symbols to fetch (optional)')
+    fetch_parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
+    fetch_parser.add_argument('--end-date', help='End date (YYYY-MM-DD), defaults to today')
+    fetch_parser.add_argument('--use-enhanced-fetcher', action='store_true', help='Use enhanced market fetcher with additional data')
+    
+    # Query InfluxDB command
+    query_parser = subparsers.add_parser('query-influxdb', help='Query stock data from InfluxDB')
+    query_parser.add_argument('--symbol', required=True, help='Stock symbol to query')
+    query_parser.add_argument('--market', required=True, help='Market (e.g., nyse, nasdaq)')
+    query_parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
+    query_parser.add_argument('--end-date', help='End date (YYYY-MM-DD), defaults to today')
+    query_parser.add_argument('--output-format', choices=['csv', 'json', 'plot'], default='plot',
+                              help='Output format (csv, json, or plot)')
+    query_parser.add_argument('--output-file', help='Output file path')
+    query_parser.add_argument('--plot-type', choices=['line', 'candlestick', 'ohlc'], default='line',
+                              help='Plot type (line, candlestick, or ohlc)')
+    
+    # Add verbose flag to all commands
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     
     return parser.parse_args()
 
@@ -151,8 +179,57 @@ def main():
         run_backtest()
     elif args.command == 'backtest':
         run_custom_backtest(args)
+    elif args.command == 'fetch-data':
+        fetch_market_data(args)
+    elif args.command == 'configure-storage':
+        # Pass arguments to the configure_storage function
+        from argparse import Namespace
+        storage_args = Namespace(
+            use_influxdb=args.use_influxdb,
+            use_file_storage=args.use_file_storage,
+            influxdb_url=args.influxdb_url,
+            influxdb_token=args.influxdb_token,
+            influxdb_org=args.influxdb_org,
+            influxdb_bucket=args.influxdb_bucket
+        )
+        configure_storage(storage_args)
+    elif args.command == 'query-influxdb':
+        # Call the query_influxdb function
+        query_influxdb()
     else:
         print("Please specify a command. Use --help for more information.")
+
+
+def fetch_market_data(args):
+    """Fetch market data based on command-line arguments."""
+    import asyncio
+    from src.market_data.core.market_fetcher import ConsolidatedMarketFetcher
+    from src.market_data.providers.enhanced_fetcher import EnhancedMarketFetcher
+    
+    # Parse dates
+    start_date = datetime.strptime(args.start_date, '%Y-%m-%d')
+    end_date = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else datetime.now()
+    
+    async def fetch_data():
+        if args.use_enhanced_fetcher:
+            # Use enhanced fetcher with additional data fields
+            fetcher = EnhancedMarketFetcher()
+        else:
+            # Use standard fetcher
+            fetcher = ConsolidatedMarketFetcher()
+        
+        # Fetch the data
+        await fetcher.fetch_market_data(
+            market=args.market,
+            start_date=start_date,
+            end_date=end_date,
+            symbols=args.symbols
+        )
+        
+        print(f"Data fetching completed for {args.market}")
+    
+    # Run the async function
+    asyncio.run(fetch_data())
 
 
 if __name__ == "__main__":

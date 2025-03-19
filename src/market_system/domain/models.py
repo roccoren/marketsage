@@ -43,6 +43,26 @@ class Signal:
     strategy_name: str
     market_state: MarketState
     indicators_snapshot: Dict[str, float]
+    priority: int = 100  # Lower is higher priority, default is lowest
+    stop_loss: Optional[Decimal] = None
+    take_profit: Optional[Decimal] = None
+    quantity: Optional[Decimal] = None
+    
+    def to_dict(self):
+        """Convert signal to dictionary for serialization"""
+        return {
+            "symbol": self.symbol,
+            "timestamp": self.timestamp,
+            "action": self.action,
+            "confidence": self.confidence,
+            "strategy_name": self.strategy_name,
+            "market_state": self.market_state.value,
+            "indicators_snapshot": self.indicators_snapshot,
+            "priority": self.priority,
+            "stop_loss": float(self.stop_loss) if self.stop_loss is not None else None,
+            "take_profit": float(self.take_profit) if self.take_profit is not None else None,
+            "quantity": float(self.quantity) if self.quantity is not None else None
+        }
 
 @dataclass
 class RiskMetrics:

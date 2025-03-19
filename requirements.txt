@@ -6,6 +6,7 @@ jsonschema>=3.2.0
 # Data visualization
 matplotlib>=3.5.0
 seaborn>=0.11.0
+mplfinance>=0.12.9b1
 
 # Progress tracking
 tqdm>=4.62.0
