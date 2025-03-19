@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Union
 import aiofiles
 from functools import lru_cache
+import pandas as pd
 
 from .providers.consolidated_yahoo import BatchingYahooProvider
+from .core.influxdb_cache import InfluxDBMarketDataCache
 from .models.common import (
     MarketData,
     ProviderConfig,
@@ -124,46 +126,49 @@ class MarketDataCache:
 
 class MarketDataFetcher:
     """
-    Optimized market data fetcher with efficient batch operations.
+    Base market data fetcher with provider abstraction.
     
     Features:
-    - Batch processing of market data requests
-    - Smart caching with TTL
-    - Automatic market registry management
-    - Parallel processing with controlled concurrency
-    - Robust error handling and logging
+    - Provider-agnostic interface for market data
+    - Efficient caching with time-to-live
+    - Registry-based symbol validation
+    - Batch processing capabilities
+    - InfluxDB storage for time series data
     """
     
     def __init__(
         self,
+        provider,
+        registry,
         data_dir: str = "data",
-        config_dir: str = "config/market",
-        cache_ttl_days: int = 1,
-        max_concurrent: int = 3,
-        batch_size: int = 10
+        ttl_days: int = 1,
+        batch_size: int = 50,
+        use_influxdb: bool = True
     ):
-        # Initialize components
-        self.registry = MarketRegistry(config_dir)
-        self.cache = MarketDataCache(data_dir, cache_ttl_days)
+        """
+        Initialize market data fetcher.
         
-        # Configure provider
-        provider_config = ProviderConfig(
-            name="yahoo",
-            rate_limit=RateLimitConfig(
-                requests_per_second=0.5,  # 2 requests per second max
-                burst_size=batch_size,
-                retry_after=300  # 5 minutes cooldown
-            ),
-            cache=CacheConfig(
-                enabled=True,
-                ttl=86400,  # 1 day cache
-                directory=str(Path(data_dir) / ".provider_cache")
-            )
-        )
+        Args:
+            provider: Market data provider instance
+            registry: Symbol registry instance
+            data_dir: Directory for data storage
+            ttl_days: Cache time-to-live in days
+            batch_size: Batch size for operations
+            use_influxdb: Whether to use InfluxDB for storage
+        """
+        self.provider = provider
+        self.registry = registry
         
-        self.provider = BatchingYahooProvider(provider_config)
+        # Set cache implementation based on configuration
+        if use_influxdb:
+            self.cache = InfluxDBMarketDataCache(data_dir, ttl_days)
+        else:
+            self.cache = MarketDataCache(data_dir, ttl_days)
+            
         self.batch_size = batch_size
-        self.max_concurrent = max_concurrent
+        
+        # Create data directory
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
     
     async def fetch_market_data(
         self,

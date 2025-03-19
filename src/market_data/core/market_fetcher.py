@@ -11,6 +11,9 @@ import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
+# Import the new InfluxDB cache
+from .influxdb_cache import InfluxDBMarketDataCache
+
 logger = logging.getLogger(__name__)
 
 class CircuitBreaker:
@@ -170,6 +173,7 @@ class ConsolidatedMarketFetcher:
     - Automatic market registry management
     - Parallel processing with controlled concurrency
     - Robust error handling and logging
+    - InfluxDB storage for time series data
     """
     
     def __init__(
@@ -179,11 +183,17 @@ class ConsolidatedMarketFetcher:
         cache_ttl_days: int = 1,
         max_concurrent: int = 3,
         batch_size: int = 10,
-        rate_limit: float = 0.5
+        rate_limit: float = 0.5,
+        use_influxdb: bool = True
     ):
         # Initialize components
         self.registry = MarketRegistry(config_dir)
-        self.cache = MarketDataCache(data_dir, cache_ttl_days)
+        
+        # Use InfluxDB cache if enabled, otherwise use file-based cache
+        if use_influxdb:
+            self.cache = InfluxDBMarketDataCache(data_dir, cache_ttl_days)
+        else:
+            self.cache = MarketDataCache(data_dir, cache_ttl_days)
         
         # Configure concurrency
         self.max_concurrent = max_concurrent

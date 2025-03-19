@@ -10,7 +10,8 @@ from functools import lru_cache, partial
 import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
-from ..core.market_fetcher import MarketRegistry, MarketDataCache
+from ..core.market_fetcher import MarketRegistry
+from ..core.influxdb_cache import InfluxDBMarketDataCache
 from ..rate_limiting import TokenBucket, CircuitBreaker
 logger = logging.getLogger(__name__)
 class EnhancedMarketFetcher:
@@ -25,49 +26,71 @@ class EnhancedMarketFetcher:
     - Retry mechanisms with exponential backoff
     - Enhanced error handling and monitoring
     - Combined OHLCV and fundamental data fetching
+    - InfluxDB storage for time series data
     """
     
     def __init__(
         self,
         data_dir: str = "data",
         config_dir: str = "config/market",
-        cache_ttl_days: int = 1,
+        cache_ttl_days: int = 30,
         max_concurrent: int = 5,
         batch_size: int = 20,
-        requests_per_minute: int = 60,
-        retry_attempts: int = 3,
-        retry_delay: float = 1.0
+        rate_limit: float = 0.3,
+        use_influxdb: bool = True
     ):
-        # Initialize components
-        self.registry = MarketRegistry(config_dir)
-        self.cache = MarketDataCache(data_dir, cache_ttl_days)
+        """
+        Initialize the enhanced market data fetcher.
         
-        # Configure concurrency
-        self.max_concurrent = max_concurrent
+        Args:
+            data_dir: Root directory for data storage
+            config_dir: Directory for market configuration files
+            cache_ttl_days: Days to retain cached data
+            max_concurrent: Maximum concurrent operations
+            batch_size: Batch size for download operations
+            rate_limit: Rate limit in operations per second
+            use_influxdb: Whether to use InfluxDB for data storage
+        """
+        # Core components
+        self.registry = MarketRegistry(config_dir)
+        
+        # Use InfluxDB cache if enabled, otherwise use regular cache
+        if use_influxdb:
+            self.cache = InfluxDBMarketDataCache(data_dir, cache_ttl_days)
+        else:
+            from ..core.market_fetcher import MarketDataCache
+            self.cache = MarketDataCache(data_dir, cache_ttl_days)
+            
+        # Rate limiting and concurrency
+        self.token_bucket = TokenBucket(rate_limit, 30)
+        self.circuit_breaker = CircuitBreaker(10, 600)
         self.batch_size = batch_size
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.thread_pool = ThreadPoolExecutor(max_workers=max_concurrent)
+        self.thread_pool = ThreadPoolExecutor(max_workers=max_concurrent * 2)
         
-        # Configure rate limiting
-        rate_limit_ms = (60 / requests_per_minute) * 1000
-        self.token_bucket = TokenBucket(rate_limit_ms, batch_size)
-        self.circuit_breaker = CircuitBreaker(5, 60)
+        # Performance settings
+        self.retries = 3
+        self.retry_delay = 1.5
+        self.backoff_factor = 2.0
         
-        # Configure retry settings
-        self.retry_attempts = retry_attempts
-        self.retry_delay = retry_delay
-        
-        # Configure data storage
-        self.data_dir = Path(data_dir)
-        self.cache_dir = self.data_dir / ".provider_cache"
+        # Disk cache for provider responses
+        self.cache_dir = Path(data_dir) / ".enhanced_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        yf.set_tz_cache_location(str(self.cache_dir))
+        
+        # Market specific paths
+        self.market_paths = {}
+        for market in self.registry.get_markets():
+            path = Path(data_dir) / market
+            path.mkdir(parents=True, exist_ok=True)
+            self.market_paths[market] = path
+            
+        logger.info(f"Enhanced Market Fetcher initialized with batch size {batch_size}")
         
         # Cache for Ticker objects
         self._ticker_cache = {}
     async def _exponential_backoff(self, attempt: int) -> None:
         """Implement exponential backoff for retries."""
-        delay = self.retry_delay * (2 ** (attempt - 1))
+        delay = self.retry_delay * (self.backoff_factor ** (attempt - 1))
         await asyncio.sleep(delay)
     async def _download_with_retry(
         self,
@@ -75,12 +98,61 @@ class EnhancedMarketFetcher:
         start_date: datetime,
         end_date: datetime
     ) -> Optional[pd.DataFrame]:
-        """Download data with retry mechanism."""
-        for attempt in range(1, self.retry_attempts + 1):
+        """Download data with retry mechanism and date chunking for large ranges."""
+        # For very large date ranges, split into smaller chunks for more reliable downloads
+        date_diff = (end_date - start_date).days
+        
+        # If date range is large, split into smaller chunks (90 days each)
+        if date_diff > 90:
+            logger.info(f"Large date range ({date_diff} days), splitting into smaller chunks for download")
+            
+            # Initialize an empty DataFrame to hold all results
+            combined_df = None
+            current_start = start_date
+            
+            while current_start < end_date:
+                # Calculate end date for this chunk (90 days or less)
+                chunk_end = min(current_start + timedelta(days=90), end_date)
+                
+                logger.info(f"Downloading chunk: {current_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+                
+                # Download this chunk with retry
+                for attempt in range(1, self.retries + 1):
+                    try:
+                        chunk_df = await self._download_batch(symbols, current_start, chunk_end)
+                        
+                        if chunk_df is not None and not chunk_df.empty:
+                            # Merge with combined results
+                            if combined_df is None:
+                                combined_df = chunk_df
+                            else:
+                                # Make sure both DataFrames have MultiIndex columns
+                                if isinstance(chunk_df.columns, pd.MultiIndex) and isinstance(combined_df.columns, pd.MultiIndex):
+                                    # This is a concat along index (dates)
+                                    combined_df = pd.concat([combined_df, chunk_df])
+                        
+                        # Move to next chunk
+                        break
+                        
+                    except Exception as e:
+                        if attempt == self.retries:
+                            logger.error(f"All retry attempts failed for date chunk: {str(e)}")
+                        else:
+                            logger.warning(f"Attempt {attempt} failed for date chunk, retrying after backoff...")
+                            await self._exponential_backoff(attempt)
+                
+                # Move to the next chunk
+                current_start = chunk_end + timedelta(days=1)
+            
+            # Return the combined results
+            return combined_df
+        
+        # For smaller date ranges, download directly with retry
+        for attempt in range(1, self.retries + 1):
             try:
                 return await self._download_batch(symbols, start_date, end_date)
             except Exception as e:
-                if attempt == self.retry_attempts:
+                if attempt == self.retries:
                     logger.error(f"All retry attempts failed for symbols {symbols}: {str(e)}")
                     return None
                 logger.warning(f"Attempt {attempt} failed, retrying after backoff...")
@@ -171,7 +243,7 @@ class EnhancedMarketFetcher:
                 return None
     def _get_market_data_path(self, market: str, symbol: str) -> Path:
         """Get the path for storing market-specific data."""
-        return self.data_dir / market / symbol
+        return self.market_paths[market] / symbol
     async def fetch_market_data(
         self,
         market: str,
