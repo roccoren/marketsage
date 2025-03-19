@@ -1,0 +1,35 @@
+# Strategy configuration
+start_time: "2023-01-01"
+end_time: "2024-01-01"
+
+# Instruments to trade (can be "all" or a list of symbols)
+instruments: 
+  - "AAPL"
+  - "MSFT"
+  - "GOOGL"
+  - "AMZN"
+  - "META"
+
+# Strategy-specific configuration
+strategy:
+  fast_period: 12
+  slow_period: 26
+  signal_period: 9
+  topk: 3  # Number of top stocks to hold
+  n_drop: 1  # Number of stocks to drop from top k
+
+# Backtest configuration
+backtest:
+  executor:
+    kwargs:
+      time_per_step: "day"
+      generate_portfolio_metrics: true
+      deal_price: "close"
+      subscribe_fields: ["$close", "$volume", "$factor"]
+      trade_exchange:
+        kwargs:
+          limit_threshold: 0.095
+          deal_price: "close"
+          open_cost: 0.0003
+          close_cost: 0.0003
+          min_cost: 5.0 
