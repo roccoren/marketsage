@@ -1,1 +1,0 @@
-"""StockScan scanner module."""

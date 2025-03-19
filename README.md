@@ -11,22 +11,11 @@ StockScan is a stock analysis and backtesting system for developing, testing, an
 - **Parameter Optimization**: Automatic optimization of strategy parameters to improve effectiveness
 - **Market Scanning**: Scan the market based on strategy signals to find trading opportunities
 - **Visualization**: Intuitive display of backtesting results and technical indicators
-- **Microsoft Qlib + RDAgent Integration**: Advanced stock prediction using Microsoft's Qlib library combined with RDAgent reinforcement learning for more effective buy/sell signal generation. This integration enables more accurate trading signal predictions through deep learning and reinforcement learning techniques.
 
 ## Directory Structure
 
 ```
 stockscan/
-├── config/                       # Configuration files directory
-│   ├── default_config.yaml       # Default configuration
-│   ├── logging_config.yaml       # Logging configuration
-│   ├── strategy_config.yaml      # Strategy configuration
-│   ├── config.json               # General configuration
-│   ├── requirements.txt          # Config-specific requirements
-│   ├── exchanges/                # Exchange-specific configurations
-│   ├── strategies/               # Strategy parameter configurations
-│   └── market/                   # Market-specific configurations
-│
 ├── data/                         # Data directory
 │   ├── raw/                      # Raw data
 │   ├── processed/                # Preprocessed data
@@ -55,16 +44,10 @@ stockscan/
 │   ├── utils/                    # Utility classes
 │   └── scanner/                  # Scanner related
 │
-├── scripts/                      # Utility scripts
-├── examples/                     # Example code
 ├── tests/                        # Test code
-├── notebooks/                    # Jupyter notebooks
-├── docs/                         # Documentation
 ├── output/                       # Output directory
-├── reports/                      # Analysis reports directory
 ├── logs/                         # Log files directory
 │
-├── requirements/                 # Dependency management
 ├── .gitignore                    # Git ignore file
 ├── .cursorignore                 # Cursor editor ignore file
 ├── .dockerignore                 # Docker ignore file
@@ -95,12 +78,6 @@ cd stockscan
 2. Install dependencies
 
 ```bash
-pip install -r requirements/dev.txt  # Install development dependencies
-```
-
-3. Development mode installation
-
-```bash
 pip install -e .  # Install in development mode
 ```
 
@@ -108,7 +85,7 @@ pip install -e .  # Install in development mode
 
 ### Unified Command Line Interface
 
-StockScan now provides a unified command line interface for all operations:
+StockScan provides a unified command line interface for all operations:
 
 ```bash
 # Run backtesting
@@ -120,12 +97,6 @@ python run.py optimize --strategy macd --symbols AAPL --market nyse --n-trials 1
 # Download market data
 python run.py download --symbols-file data/symbols/nasdaq.txt --start-date 2020-01-01
 
-# Run QLib strategies
-python run.py qlib --qlib-config config/qlib_config.yaml --strategy alpha158
-
-# Cleanup temporary files
-python run.py cleanup --target-dir data/cache --dry-run
-
 # Scan stocks with a strategy
 python run.py scan --strategy macd --market nasdaq
 ```
@@ -134,12 +105,6 @@ python run.py scan --strategy macd --market nasdaq
 
 ```bash
 python -m stockscan.main --exchanges HKEX --strategies rsi_stoch,atr_ma,adx_macd_cci,obv
-```
-
-### Data Download
-
-```bash
-python scripts/download_data.py --exchange NYSE --symbols AAPL,MSFT,GOOGL --start-date 2020-01-01
 ```
 
 ### Run Backtesting
@@ -159,27 +124,6 @@ python run_backtest.py optimize --strategy macd --exchange NYSE --symbol AAPL
 ```bash
 python run_backtest.py scan --strategy macd --exchange NYSE --date 2023-07-15
 ```
-
-### Qlib + RDAgent Integration
-
-The Qlib + RDAgent integration is currently being reimplemented. Documentation and examples will be provided once the new implementation is complete.
-
-## Examples
-
-Example code is located in the `examples` directory:
-
-- `examples/backtest_examples/`: Backtesting examples
-- `examples/optimization_examples/`: Optimization examples
-- `examples/scanner_examples/`: Scanning examples
-
-## Documentation
-
-Detailed documentation is located in the `docs` directory:
-
-- `docs/getting_started.md`: Getting started guide
-- `docs/strategies.md`: Strategy development guide
-- `docs/backtesting.md`: Backtesting system description
-- `docs/api/`: API documentation
 
 ## Development Guide
 
@@ -206,28 +150,12 @@ docker run -it \
 
 1. Create a new strategy class in `stockscan/strategies`, inheriting from the `Strategy` base class
 2. Implement the `analyze` method to generate trading signals
-3. Add strategy parameter configuration in `config/strategies/`
 
 ### Running Tests
 
 ```bash
 pytest tests/  # Run all tests
 pytest tests/unit/  # Run unit tests only
-```
-
-### Code Formatting
-
-```bash
-# Use automated script to format code
-python scripts/format_code.py
-```
-
-## Project Reorganization
-
-This project has recently undergone code restructuring, adopting a more modular and maintainable structure. If you are using an older version of the code, please use the migration script to update:
-
-```bash
-python scripts/migrate_code.py --backup
 ```
 
 ## Contribution Guidelines

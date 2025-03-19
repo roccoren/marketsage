@@ -1,8 +1,0 @@
--r base.txt
-
-# Documentation
-sphinx>=4.0.2
-sphinx-rtd-theme>=0.5.2
-myst-parser>=0.15.2
-sphinx-copybutton>=0.4.0
-sphinx-autodoc-typehints>=1.12.0
