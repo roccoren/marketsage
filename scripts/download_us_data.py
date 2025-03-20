@@ -10,6 +10,7 @@ import subprocess
 import shutil
 from pathlib import Path
 import traceback
+import argparse
 
 # Configure logging
 logging.basicConfig(
@@ -55,6 +56,18 @@ except ImportError:
     # Fallback for older versions of qlib
     REG_US = "us"
 
+def read_symbols_file(file_path):
+    """Read stock symbols from a file"""
+    logger.info(f"Reading symbols from {file_path}")
+    try:
+        with open(file_path, 'r') as f:
+            symbols = [line.strip() for line in f if line.strip()]
+        logger.info(f"Found {len(symbols)} symbols")
+        return symbols
+    except Exception as e:
+        logger.error(f"Error reading symbols file: {e}")
+        return []
+
 def download_stock_data(symbol, start_date, end_date):
     """Download stock data using yfinance"""
     try:
@@ -98,7 +111,7 @@ def download_stock_data(symbol, start_date, end_date):
         logger.error(f"Error downloading data for {symbol}: {e}")
         return None
 
-def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50):
+def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50, symbols_file=None):
     """Download US stock data and prepare it for Qlib"""
     target_dir = os.path.expanduser(target_dir)
     os.makedirs(target_dir, exist_ok=True)
@@ -113,6 +126,11 @@ def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50):
                 shutil.rmtree(item_path)
             else:
                 os.remove(item_path)
+    
+    # Create the proper directory structure for Qlib
+    os.makedirs(os.path.join(target_dir, "features"), exist_ok=True)
+    os.makedirs(os.path.join(target_dir, "calendars"), exist_ok=True)
+    os.makedirs(os.path.join(target_dir, "instruments"), exist_ok=True)
     
     # Common stock indices/tickers
     indices = ["SPY", "QQQ", "DIA"]  # S&P 500, NASDAQ, Dow Jones
@@ -143,6 +161,13 @@ def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50):
     else:
         # Use both S&P 500 and our specific lists
         all_tickers = list(set(indices + tech_stocks + sp500_tickers))
+    
+    # Read symbols from file if provided
+    if symbols_file:
+        file_symbols = read_symbols_file(symbols_file)
+        if file_symbols:
+            logger.info(f"Adding {len(file_symbols)} symbols from file")
+            all_tickers = list(set(all_tickers + file_symbols))
     
     # Make sure we have at least minimum number of stocks (sample if too many)
     if len(all_tickers) > 200:  # Limit to manageable number if we have full S&P500
@@ -184,17 +209,13 @@ def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50):
     )
     instruments_df.to_pickle(os.path.join(target_dir, "instruments.pkl"))
     
-    # Create instruments directory for qlib
-    instruments_dir = os.path.join(target_dir, "instruments")
-    os.makedirs(instruments_dir, exist_ok=True)
-    
     # Create full list of instruments in the format qlib expects
-    with open(os.path.join(instruments_dir, "all.txt"), "w") as f:
+    with open(os.path.join(target_dir, "instruments", "all.txt"), "w") as f:
         for ticker in instruments:
             f.write(f"{ticker}\n")
             
     # Also save it in CSI300 file (qlib often looks for this)
-    with open(os.path.join(instruments_dir, "csi300.txt"), "w") as f:
+    with open(os.path.join(target_dir, "instruments", "csi300.txt"), "w") as f:
         for ticker in instruments:
             f.write(f"{ticker}\n")
     
@@ -207,12 +228,6 @@ def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50):
     
     # Save the main calendar
     calendar_series.to_pickle(os.path.join(target_dir, "calendar.pkl"))
-    
-    # Create proper directory structure for qlib frequencies
-    # The key is to place calendars in the correct structure:
-    # - frequency metadata directory
-    os.makedirs(os.path.join(target_dir, "features"), exist_ok=True)
-    os.makedirs(os.path.join(target_dir, "calendars"), exist_ok=True)
     
     # Save with frequency designation for day frequency
     day_dir = os.path.join(target_dir, "calendars", "day")
@@ -228,204 +243,62 @@ def prepare_us_data(target_dir='~/.qlib/qlib_data/us_data', min_stocks=50):
     day_symlink = os.path.join(target_dir, "day.pkl")
     oneday_symlink = os.path.join(target_dir, "1d.pkl")
     
-    # Remove existing files if they exist
     if os.path.exists(day_symlink):
         os.remove(day_symlink)
     if os.path.exists(oneday_symlink):
         os.remove(oneday_symlink)
-    
-    # Create symlinks
-    try:
-        os.symlink(os.path.join("calendars", "day", "calendar.pkl"), day_symlink)
-        os.symlink(os.path.join("calendars", "1d", "calendar.pkl"), oneday_symlink)
-    except Exception as e:
-        # If symlinks fail, just copy the files
-        logger.warning(f"Symlink creation failed: {e}")
-        shutil.copy(
-            os.path.join(target_dir, "calendars", "day", "calendar.pkl"), 
-            day_symlink
-        )
-        shutil.copy(
-            os.path.join(target_dir, "calendars", "1d", "calendar.pkl"), 
-            oneday_symlink
-        )
-    
-    # Create raw directory structure
-    raw_dir = os.path.join(target_dir, "raw")
-    os.makedirs(raw_dir, exist_ok=True)
-    
-    # Create feature directory structure
-    for ticker in tqdm(instruments, desc="Creating feature files"):
-        ticker_path = os.path.join(raw_dir, ticker)
-        os.makedirs(ticker_path, exist_ok=True)
         
-        # Get data for this ticker
-        data = all_data[ticker]
-        
-        # Create feature file with all required columns
-        feature_df = pd.DataFrame(index=data.index)
-        
-        # Add basic OHLCV features with fallbacks for missing columns
-        for col, qlib_col in [
-            ('open', '$open'), 
-            ('high', '$high'), 
-            ('low', '$low'), 
-            ('close', '$close'), 
-            ('volume', '$volume')
-        ]:
-            if col in data.columns:
-                feature_df[qlib_col] = data[col].values
-            else:
-                # Fallback: if a column is missing, try to derive it or use close
-                if col == 'open' and 'close' in data.columns:
-                    feature_df[qlib_col] = data['close'].values
-                    logger.warning(f"{col} not available for {ticker}, using close price instead")
-                elif col == 'high' and 'close' in data.columns:
-                    feature_df[qlib_col] = data['close'].values
-                    logger.warning(f"{col} not available for {ticker}, using close price instead")
-                elif col == 'low' and 'close' in data.columns:
-                    feature_df[qlib_col] = data['close'].values
-                    logger.warning(f"{col} not available for {ticker}, using close price instead")
-                elif col == 'volume':
-                    feature_df[qlib_col] = 0  # Default volume to 0 if missing
-                    logger.warning(f"{col} not available for {ticker}, using 0 instead")
-                else:
-                    # This should not happen if we properly filtered out stocks with no data
-                    logger.error(f"Critical column {col} not available for {ticker} and no fallback available")
-                    break
-        
-        # Add adjustment factor
-        feature_df["$factor"] = 1.0  # Default adjustment factor
-        
-        # Handle case when adjclose isn't available
-        if "adjclose" in data.columns:
-            feature_df["$adjclose"] = data["adjclose"].values
-        elif "close" in data.columns:
-            # If adjclose is not available, use close price as fallback
-            feature_df["$adjclose"] = data["close"].values
-            logger.warning(f"Adjusted close not available for {ticker}, using close price instead")
-        else:
-            # This should not happen if we properly filtered out stocks with no data
-            logger.error(f"Both adjclose and close are not available for {ticker}")
-            continue
-        
-        # Calculate VWAP or fallback to close price
-        if all(col in data.columns for col in ['high', 'low', 'close']):
-            feature_df["$vwap"] = (data["high"] + data["low"] + data["close"]) / 3
-        elif "close" in data.columns:
-            feature_df["$vwap"] = data["close"]
-            logger.warning(f"Cannot calculate VWAP for {ticker}, using close price instead")
-        else:
-            # This should not happen if we properly filtered out stocks with no data
-            logger.error(f"Cannot calculate VWAP for {ticker} and no fallback available")
-            continue
-        
-        # Save to pickle
-        feature_df.to_pickle(os.path.join(ticker_path, "feature.pkl"))
+    os.symlink(os.path.join(day_dir, "calendar.pkl"), day_symlink)
+    os.symlink(os.path.join(oneday_dir, "calendar.pkl"), oneday_symlink)
     
-    # Create a bin directory to store prepared data
-    bin_dir = os.path.join(target_dir, "bin")
-    os.makedirs(bin_dir, exist_ok=True)
-    
-    # Write a README file
-    with open(os.path.join(target_dir, "README.md"), "w") as f:
-        f.write("# US Stock Data for Qlib\n\n")
-        f.write(f"This directory contains US stock data for use with Qlib.\n\n")
-        f.write(f"- Data generated on: {datetime.now().strftime('%Y-%m-%d')}\n")
-        f.write(f"- Number of stocks: {len(instruments)}\n")
-        f.write(f"- Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}\n")
-        f.write(f"- Features: open, high, low, close, volume, adjclose, vwap\n\n")
-    
-    # Test the data with Qlib
-    try:
-        logger.info("Testing Qlib initialization...")
-        qlib.init(provider_uri=target_dir, region=REG_US)
+    # Create feature files for each ticker
+    logger.info("Creating feature files...")
+    for ticker, data in tqdm(all_data.items()):
+        # Create ticker directory
+        ticker_dir = os.path.join(target_dir, "features", ticker)
+        os.makedirs(ticker_dir, exist_ok=True)
         
-        # Test for a few stocks
-        test_tickers = [t for t in ["AAPL", "MSFT", "NVDA"] if t in all_data]
-        if test_tickers:
-            try:
-                from qlib.data import D
-                logger.info(f"Testing data retrieval for {test_tickers[0]}...")
-                # Use a slightly narrower date range for testing
-                test_start = start_date + timedelta(days=10)
-                test_end = end_date - timedelta(days=10)
-                
-                fields = ["$close", "$open", "$high", "$low", "$volume"]
-                
-                # Try with explicit frequency
-                logger.info("Testing with explicit frequency (day)...")
-                try:
-                    df = D.features(
-                        test_tickers[0:1], 
-                        fields, 
-                        test_start.strftime('%Y-%m-%d'),
-                        test_end.strftime('%Y-%m-%d'),
-                        freq="day"
-                    )
-                    
-                    if df is not None and not df.empty:
-                        logger.info(f"Successfully retrieved data with freq=day! Sample:\n{df.head()}")
-                    else:
-                        logger.warning("Retrieved empty dataframe with freq=day")
-                except Exception as e:
-                    logger.warning(f"Error testing with freq=day: {e}")
-                    
-                    # Try with 1d frequency
-                    logger.info("Testing with explicit frequency (1d)...")
-                    try:
-                        df = D.features(
-                            test_tickers[0:1], 
-                            fields, 
-                            test_start.strftime('%Y-%m-%d'),
-                            test_end.strftime('%Y-%m-%d'),
-                            freq="1d"
-                        )
-                        
-                        if df is not None and not df.empty:
-                            logger.info(f"Successfully retrieved data with freq=1d! Sample:\n{df.head()}")
-                        else:
-                            logger.warning("Retrieved empty dataframe with freq=1d")
-                    except Exception as e:
-                        logger.warning(f"Error testing with freq=1d: {e}")
-                        
-                        # If both explicit frequencies fail, try direct file access
-                        logger.info("Testing direct file access...")
-                        feature_path = os.path.join(target_dir, "raw", test_tickers[0], "feature.pkl")
-                        if os.path.exists(feature_path):
-                            df = pd.read_pickle(feature_path)
-                            logger.info(f"Direct file access successful! Sample:\n{df.head()}")
-                        else:
-                            logger.warning(f"Feature file not found at {feature_path}")
-                
-            except Exception as e:
-                logger.error(f"Error testing data retrieval: {e}")
-                traceback.print_exc()
-    except Exception as e:
-        logger.error(f"Error initializing Qlib: {e}")
-        traceback.print_exc()
+        # Save each feature separately
+        for col in data.columns:
+            feature_data = data[col].copy()
+            feature_data.to_pickle(os.path.join(ticker_dir, f"{col}.pkl"))
     
-    logger.info(f"US stock data successfully created at {target_dir}")
-    logger.info(f"Downloaded data for {len(all_data)} stocks")
+    # Create frequency metadata
+    logger.info("Creating frequency metadata...")
+    freq_meta = {
+        "__DEFAULT_FREQ": "day",
+        "day": {
+            "freq": "day",
+            "align": "right",
+            "suffix": "day",
+            "data_path": target_dir
+        },
+        "1d": {
+            "freq": "1d",
+            "align": "right",
+            "suffix": "1d",
+            "data_path": target_dir
+        }
+    }
     
+    # Save frequency metadata
+    freq_meta_path = os.path.join(target_dir, "freq_meta.pkl")
+    with open(freq_meta_path, 'wb') as f:
+        import pickle
+        pickle.dump(freq_meta, f)
+    
+    logger.info("Data preparation completed successfully!")
     return target_dir
 
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description="Download US stock data for Qlib")
+    parser.add_argument("--target_dir", default="~/.qlib/qlib_data/us_data", help="Target directory for data")
+    parser.add_argument("--min_stocks", type=int, default=50, help="Minimum number of stocks to download")
+    parser.add_argument("--symbols_file", help="File containing additional stock symbols")
+    args = parser.parse_args()
+    
+    prepare_us_data(args.target_dir, args.min_stocks, args.symbols_file)
+
 if __name__ == "__main__":
-    target_dir = '~/.qlib/qlib_data/us_data'
-    
-    # Allow custom target directory from command line
-    if len(sys.argv) > 1:
-        target_dir = sys.argv[1]
-    
-    try:
-        downloaded_dir = prepare_us_data(target_dir)
-        if downloaded_dir:
-            logger.info(f"Data preparation complete. You can now use the US stock data at: {downloaded_dir}")
-            sys.exit(0)
-        else:
-            logger.error("Failed to prepare US stock data.")
-            sys.exit(1)
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
-        traceback.print_exc()
-        sys.exit(1) 
+    main() 
