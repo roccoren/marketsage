@@ -74,11 +74,12 @@ def load_azure_config(config_file=None):
     load_dotenv()
     
     # Default configuration (from environment variables)
+    # First check for Azure-specific variables, then fall back to generic OpenAI ones
     config = {
-        'api_key': os.environ.get('OPENAI_API_KEY'),
-        'azure_endpoint': os.environ.get('OPENAI_API_BASE') or os.environ.get('AZURE_OPENAI_ENDPOINT'),
-        'azure_deployment': os.environ.get('OPENAI_DEPLOYMENT_NAME') or os.environ.get('AZURE_OPENAI_DEPLOYMENT'),
-        'azure_api_version': os.environ.get('OPENAI_API_VERSION', '2023-07-01-preview'),
+        'api_key': os.environ.get('AZURE_OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY'),
+        'azure_endpoint': os.environ.get('AZURE_OPENAI_ENDPOINT') or os.environ.get('OPENAI_API_BASE'),
+        'azure_deployment': os.environ.get('AZURE_OPENAI_DEPLOYMENT') or os.environ.get('OPENAI_DEPLOYMENT_NAME'),
+        'azure_api_version': os.environ.get('AZURE_OPENAI_API_VERSION') or os.environ.get('OPENAI_API_VERSION', '2023-07-01-preview'),
         'chat_model': os.environ.get('CHAT_MODEL', 'gpt-4')
     }
     
@@ -99,26 +100,64 @@ def load_azure_config(config_file=None):
     
     # Check if required configuration is available
     if not config['api_key']:
-        logger.warning("API key not found in environment variables or config file")
+        logger.warning("Azure OpenAI API key not found in environment variables or config file")
+        logger.warning("============================================================")
+        logger.warning("IMPORTANT: Azure OpenAI API key is not set. RDAgent will not work.")
+        logger.warning("Please set one of these environment variables in your .env file:")
+        logger.warning("  AZURE_OPENAI_API_KEY=your_azure_api_key_here")
+        logger.warning("  OPENAI_API_KEY=your_azure_api_key_here")
+        logger.warning("============================================================")
+    elif len(config['api_key']) < 20:  # Basic validation for key format
+        logger.warning(f"API key found but appears to be invalid (too short)")
+        
+    # Validate Azure endpoint and deployment
+    if not config['azure_endpoint']:
+        logger.warning("Azure OpenAI endpoint not found in environment variables or config file")
+        logger.warning("Please set AZURE_OPENAI_ENDPOINT in your .env file")
     
-    # Validate Azure deployment name - should be a model name not a date
-    if config['azure_deployment'] and config['azure_deployment'].startswith('20'):
+    if not config['azure_deployment']:
+        logger.warning("Azure OpenAI deployment name not found in environment variables or config file")
+        logger.warning("Please set AZURE_OPENAI_DEPLOYMENT in your .env file")
+    elif config['azure_deployment'].startswith('20'):  # Deployment should not be a date
         logger.warning(f"Azure deployment name '{config['azure_deployment']}' appears to be a date or invalid format.")
-        logger.warning("Setting to default 'gpt-4'. Please set OPENAI_DEPLOYMENT_NAME to your actual deployment name.")
+        logger.warning("Setting to default 'gpt-4'. Please set AZURE_OPENAI_DEPLOYMENT to your actual deployment name.")
         config['azure_deployment'] = 'gpt-4'
         
-    # Determine if using Azure OpenAI
-    is_azure = bool(config['azure_endpoint'] and config['azure_deployment'])
+    # Determine if we have sufficient configuration for Azure OpenAI
+    has_azure_config = bool(config['api_key'] and config['azure_endpoint'] and config['azure_deployment'])
     
-    if is_azure:
-        logger.info(f"Using Azure OpenAI deployment: {config['azure_deployment']}")
-        # Set API type if using Azure OpenAI
+    if has_azure_config:
+        logger.info(f"Using Azure OpenAI configuration:")
+        logger.info(f"  - Endpoint: {config['azure_endpoint']}")
+        logger.info(f"  - Deployment: {config['azure_deployment']}")
+        logger.info(f"  - API Version: {config['azure_api_version']}")
+        
+        # Set environment variables for OpenAI client library and RDAgent
         os.environ['OPENAI_API_TYPE'] = 'azure'
+        os.environ['OPENAI_API_KEY'] = config['api_key']
         os.environ['OPENAI_API_BASE'] = config['azure_endpoint']
         os.environ['OPENAI_API_VERSION'] = config['azure_api_version']
         os.environ['OPENAI_DEPLOYMENT_NAME'] = config['azure_deployment']
+        
+        # Also set Azure-specific variables for libraries that might use them
+        os.environ['AZURE_OPENAI_API_KEY'] = config['api_key']
+        os.environ['AZURE_OPENAI_ENDPOINT'] = config['azure_endpoint']
+        os.environ['AZURE_OPENAI_DEPLOYMENT'] = config['azure_deployment']
+        
+        # Create a .env file in the current directory to help RDAgent find the configuration
+        try:
+            with open('.env.rdagent', 'w') as f:
+                f.write(f"OPENAI_API_TYPE=azure\n")
+                f.write(f"OPENAI_API_KEY={config['api_key']}\n")
+                f.write(f"OPENAI_API_BASE={config['azure_endpoint']}\n")
+                f.write(f"OPENAI_API_VERSION={config['azure_api_version']}\n")
+                f.write(f"OPENAI_DEPLOYMENT_NAME={config['azure_deployment']}\n")
+                
+            logger.info("Created .env.rdagent file to help RDAgent find Azure configuration")
+        except Exception as e:
+            logger.warning(f"Could not create .env.rdagent file: {e}")
     else:
-        logger.info("Using direct OpenAI API (Azure OpenAI configuration not found)")
+        logger.warning("Insufficient Azure OpenAI configuration. RDAgent may not work properly.")
     
     return config
 
@@ -430,7 +469,7 @@ def install_rdagent():
         
         # Install additional dependencies that might be needed
         logger.info("Installing additional dependencies...")
-        deps = ["openai>=1.0.0", "numpy", "pandas", "scikit-learn", "colorama"]
+        deps = ["openai>=1.0.0", "numpy", "pandas", "scikit-learn", "colorama", "python-dotenv"]
         for dep in deps:
             try:
                 subprocess.run([sys.executable, "-m", "pip", "install", dep],
@@ -453,6 +492,30 @@ def install_rdagent():
                 logger.warning(f"RDAgent CLI returned error: {version_check.stderr}")
         except Exception as e:
             logger.warning(f"RDAgent CLI check failed: {e}")
+        
+        # Create rdagent config file for Azure OpenAI if environment variables are available
+        api_key = os.environ.get('AZURE_OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
+        azure_endpoint = os.environ.get('AZURE_OPENAI_ENDPOINT') or os.environ.get('OPENAI_API_BASE')
+        azure_deployment = os.environ.get('AZURE_OPENAI_DEPLOYMENT') or os.environ.get('OPENAI_DEPLOYMENT_NAME')
+        
+        if api_key and azure_endpoint and azure_deployment:
+            logger.info("Creating RDAgent config file for Azure OpenAI...")
+            try:
+                # Create .rdagentrc in user's home directory
+                import os.path
+                rdagent_config_path = os.path.expanduser("~/.rdagentrc")
+                with open(rdagent_config_path, 'w') as f:
+                    f.write("[rdagent]\n")
+                    f.write("api_type = azure\n")
+                    f.write(f"api_key = {api_key}\n")
+                    f.write(f"api_base = {azure_endpoint}\n")
+                    f.write(f"api_version = {os.environ.get('AZURE_OPENAI_API_VERSION') or os.environ.get('OPENAI_API_VERSION', '2023-07-01-preview')}\n")
+                    f.write(f"deployment_name = {azure_deployment}\n")
+                    f.write("model = gpt-4\n")
+                
+                logger.info(f"Created RDAgent config file at {rdagent_config_path}")
+            except Exception as e:
+                logger.warning(f"Failed to create RDAgent config file: {e}")
         
         logger.info("RDAgent successfully installed.")
         return True
@@ -509,6 +572,26 @@ def main():
     
     # Create RDAgent manager with Azure OpenAI configuration
     try:
+        # First check if Azure OpenAI environment variables are properly set
+        azure_env_vars = {
+            'OPENAI_API_TYPE': os.environ.get('OPENAI_API_TYPE'),
+            'OPENAI_API_KEY': os.environ.get('OPENAI_API_KEY'),
+            'OPENAI_API_BASE': os.environ.get('OPENAI_API_BASE'),
+            'OPENAI_API_VERSION': os.environ.get('OPENAI_API_VERSION'),
+            'OPENAI_DEPLOYMENT_NAME': os.environ.get('OPENAI_DEPLOYMENT_NAME')
+        }
+        
+        # Log environment variables for debugging (without showing full API key)
+        logger.info("Azure OpenAI environment variables:")
+        for var, value in azure_env_vars.items():
+            if var == 'OPENAI_API_KEY' and value:
+                # Show only first few and last few characters of API key
+                masked_key = value[:4] + "..." + value[-4:] if len(value) > 8 else "***"
+                logger.info(f"  {var}: {masked_key}")
+            else:
+                logger.info(f"  {var}: {value}")
+        
+        # Initialize RDAgent manager
         rdagent_manager = RDAgentManager(
             log_dir=os.path.join(args.output_dir, 'logs'),
             api_key=config['api_key'],
@@ -524,8 +607,9 @@ def main():
         # Check if API key is set (required for RDAgent)
         if rdagent_available and not config['api_key']:
             logger.warning("OpenAI API key is not set. RDAgent will not work properly.")
-            logger.warning("Please set the OPENAI_API_KEY environment variable.")
             rdagent_available = False
+        elif rdagent_available:
+            logger.info("RDAgent is available and properly configured with Azure OpenAI.")
     except Exception as e:
         logger.error(f"Error initializing RDAgent manager: {e}")
         rdagent_manager = None
@@ -701,13 +785,58 @@ def main():
                             
                             logger.info(f"Saved model config to {model_config_path}")
                             
+                            # Create a custom environment script for RDAgent with Azure settings
+                            env_script_path = os.path.join(model_config_dir, 'azure_env.sh')
+                            with open(env_script_path, 'w') as f:
+                                f.write("#!/bin/bash\n")
+                                f.write(f"export OPENAI_API_TYPE=azure\n")
+                                f.write(f"export OPENAI_API_KEY={config['api_key']}\n")
+                                f.write(f"export OPENAI_API_BASE={config['azure_endpoint']}\n")
+                                f.write(f"export OPENAI_API_VERSION={config['azure_api_version']}\n")
+                                f.write(f"export OPENAI_DEPLOYMENT_NAME={config['azure_deployment']}\n")
+                                f.write(f"export AZURE_OPENAI_API_KEY={config['api_key']}\n")
+                                f.write(f"export AZURE_OPENAI_ENDPOINT={config['azure_endpoint']}\n")
+                                f.write(f"export AZURE_OPENAI_DEPLOYMENT={config['azure_deployment']}\n")
+                            
+                            # Make the script executable
+                            os.chmod(env_script_path, 0o755)
+                            logger.info(f"Created Azure environment script at {env_script_path}")
+                            
                             try:
+                                # Copy the .env.rdagent file to the model directory
+                                if os.path.exists('.env.rdagent'):
+                                    import shutil
+                                    shutil.copy2('.env.rdagent', os.path.join(model_config_dir, '.env'))
+                                    logger.info(f"Copied RDAgent environment file to {model_config_dir}")
+                                
+                                # Run RDAgent with explicit environment variables
+                                import subprocess
+                                env_vars = os.environ.copy()
+                                
+                                # Ensure Azure OpenAI environment variables are set
+                                env_vars['OPENAI_API_TYPE'] = 'azure'
+                                env_vars['OPENAI_API_KEY'] = config['api_key']
+                                env_vars['OPENAI_API_BASE'] = config['azure_endpoint']
+                                env_vars['OPENAI_API_VERSION'] = config['azure_api_version']
+                                env_vars['OPENAI_DEPLOYMENT_NAME'] = config['azure_deployment']
+                                
+                                logger.info("Calling RDAgent manager optimize_model method...")
                                 optimized_config = rdagent_manager.optimize_model(
                                     model_config=model.get_params(),
                                     data_path=os.path.join(args.output_dir, 'data'),
                                     output_path=model_config_dir,
                                     max_iterations=args.max_iterations
                                 )
+                                
+                                if optimized_config:
+                                    logger.info("RDAgent optimization completed successfully")
+                                    # Save the optimized config for reference
+                                    optimized_path = os.path.join(model_config_dir, 'optimized_config.json')
+                                    with open(optimized_path, 'w') as f:
+                                        json.dump(optimized_config, f, indent=2)
+                                    logger.info(f"Saved optimized config to {optimized_path}")
+                                else:
+                                    logger.warning("RDAgent did not return any optimized configuration")
                             except Exception as e:
                                 logger.error(f"RDAgent optimization error: {e}")
                                 logger.warning(f"Checking if RDAgent is properly configured...")
@@ -765,7 +894,7 @@ def main():
                                 else:
                                     logger.warning(f"Skipping optimized predictions because training failed")
                         else:
-                            logger.info(f"Skipping RDAgent optimization for {model_name} because RDAgent is not available")
+                            logger.info(f"Skipping RDAgent optimization for {model_name} because RDAgent is not available or optimization is disabled")
                     except Exception as e:
                         logger.warning(f"RDAgent optimization failed for {model_name}: {e}")
                     
