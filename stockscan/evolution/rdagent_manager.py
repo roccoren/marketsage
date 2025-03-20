@@ -9,6 +9,7 @@ import pandas as pd
 import tempfile
 import logging
 from dotenv import load_dotenv
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -283,34 +284,79 @@ class RDAgentManager:
             except Exception as e:
                 logger.warning(f"Failed to create local .env file: {e}")
             
-        # Prepare command
-        cmd = [
-            'rdagent', 'fin_model',
-            '--data_path', data_path,
-            '--output_path', output_path,
-            '--model_config', model_config_path,
-            '--log_dir', self.log_dir
-        ]
+        # Create a Python script to run RDAgent directly
+        script_path = os.path.join(output_path, 'run_rdagent.py')
+        with open(script_path, 'w') as f:
+            f.write("#!/usr/bin/env python\n")
+            f.write("import os\n")
+            f.write("import sys\n")
+            f.write("import json\n")
+            f.write("import logging\n\n")
+            
+            f.write("# Set up environment variables\n")
+            for key, value in env_vars.items():
+                if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
+                    f.write(f"os.environ['{key}'] = '{value}'\n")
+            
+            f.write("\n# Import rdagent after setting environment variables\n")
+            f.write("try:\n")
+            f.write("    from rdagent.app.fin_model import main as fin_model_main\n")
+            f.write("    from rdagent.app.config import get_model_config\n")
+            f.write("except ImportError as e:\n")
+            f.write("    print(f'Error importing rdagent: {e}')\n")
+            f.write("    sys.exit(1)\n\n")
+            
+            f.write("# Set up arguments\n")
+            f.write(f"data_path = '{data_path}'\n")
+            f.write(f"output_path = '{output_path}'\n")
+            f.write(f"model_config_path = '{model_config_path}'\n")
+            f.write(f"log_dir = '{self.log_dir}'\n")
+            f.write(f"max_iterations = {max_iterations}\n\n")
+            
+            f.write("# Set up logging\n")
+            f.write("logging.basicConfig(level=logging.INFO)\n\n")
+            
+            f.write("# Load model config\n")
+            f.write("with open(model_config_path, 'r') as f:\n")
+            f.write("    model_config = json.load(f)\n\n")
+            
+            f.write("# Call the RDAgent fin_model function directly\n")
+            f.write("try:\n")
+            f.write("    print('Starting RDAgent optimization...')\n")
+            f.write("    # Create model_config object\n")
+            f.write("    cfg = get_model_config(\n")
+            f.write("        data_path=data_path,\n")
+            f.write("        output_path=output_path,\n")
+            f.write("        model_config=model_config_path,\n")
+            f.write("        log_dir=log_dir,\n")
+            f.write("        max_iterations=max_iterations\n")
+            f.write("    )\n")
+            f.write("    # Run the main function\n")
+            f.write("    fin_model_main(cfg)\n")
+            f.write("    print('RDAgent optimization completed')\n")
+            f.write("except Exception as e:\n")
+            f.write("    print(f'Error running RDAgent: {e}')\n")
+            f.write("    sys.exit(1)\n")
         
-        if backtest_results:
-            cmd.extend(['--backtest_results', backtest_results_path])
-            
-        if max_iterations:
-            cmd.extend(['--max_iterations', str(max_iterations)])
-            
-        # Run the command
+        # Make the script executable
+        os.chmod(script_path, 0o755)
+        logger.info(f"Created RDAgent script at {script_path}")
+        
+        # Run the script
         try:
-            logger.info(f"Running RDAgent with command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, 
-                                  check=True, 
-                                  capture_output=True, 
-                                  text=True,
-                                  env=env_vars)
+            logger.info(f"Running RDAgent script: {script_path}")
+            result = subprocess.run(
+                [sys.executable, script_path],
+                check=True, 
+                capture_output=True, 
+                text=True,
+                env=env_vars
+            )
             
             # Log the output
-            logger.info(f"RDAgent stdout: {result.stdout}")
+            logger.info(f"RDAgent script stdout: {result.stdout}")
             if result.stderr:
-                logger.warning(f"RDAgent stderr: {result.stderr}")
+                logger.warning(f"RDAgent script stderr: {result.stderr}")
             
             # Parse output to get the optimized model config
             optimized_config_path = os.path.join(output_path, 'optimized_model.json')
@@ -318,8 +364,23 @@ class RDAgentManager:
                 with open(optimized_config_path, 'r') as f:
                     optimized_config = json.load(f)
                 return optimized_config
+            else:
+                # Check for any other JSON file that might contain model parameters
+                import glob
+                json_files = glob.glob(os.path.join(output_path, '*.json'))
+                for file_path in json_files:
+                    if file_path != model_config_path and 'model' in os.path.basename(file_path).lower():
+                        try:
+                            with open(file_path, 'r') as f:
+                                potential_config = json.load(f)
+                            # Check if this looks like a model config
+                            if isinstance(potential_config, dict) and len(potential_config) > 0:
+                                logger.info(f"Using alternative model config from {file_path}")
+                                return potential_config
+                        except Exception:
+                            continue
         except Exception as e:
-            logger.error(f"Error running RDAgent: {e}")
+            logger.error(f"Error running RDAgent script: {e}")
             return model_config
             
         return model_config
