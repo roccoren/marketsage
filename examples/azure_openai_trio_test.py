@@ -132,28 +132,49 @@ def load_azure_config(config_file=None):
         logger.info(f"  - Deployment: {config['azure_deployment']}")
         logger.info(f"  - API Version: {config['azure_api_version']}")
         
-        # Set environment variables for OpenAI client library and RDAgent
-        os.environ['OPENAI_API_TYPE'] = 'azure'
+        # Set environment variables according to RDAgent documentation for Azure OpenAI
+        # https://rdagent.readthedocs.io/en/latest/installation_and_configuration.html#azure-openai
+        
+        # Standard OpenAI environment variables
         os.environ['OPENAI_API_KEY'] = config['api_key']
-        os.environ['OPENAI_API_BASE'] = config['azure_endpoint']
-        os.environ['OPENAI_API_VERSION'] = config['azure_api_version']
-        os.environ['OPENAI_DEPLOYMENT_NAME'] = config['azure_deployment']
         
-        # Also set Azure-specific variables for libraries that might use them
-        os.environ['AZURE_OPENAI_API_KEY'] = config['api_key']
-        os.environ['AZURE_OPENAI_ENDPOINT'] = config['azure_endpoint']
-        os.environ['AZURE_OPENAI_DEPLOYMENT'] = config['azure_deployment']
+        # RDAgent-specific Azure OpenAI variables
+        os.environ['USE_AZURE'] = 'True'
         
-        # Create a .env file in the current directory to help RDAgent find the configuration
+        # Embedding model settings
+        os.environ['EMBEDDING_OPENAI_API_KEY'] = config['api_key']
+        os.environ['EMBEDDING_AZURE_API_BASE'] = config['azure_endpoint']
+        os.environ['EMBEDDING_AZURE_API_VERSION'] = config['azure_api_version']
+        os.environ['EMBEDDING_MODEL'] = 'text-embedding-3-small'
+        
+        # Chat model settings
+        os.environ['CHAT_OPENAI_API_KEY'] = config['api_key']
+        os.environ['CHAT_AZURE_API_BASE'] = config['azure_endpoint']
+        os.environ['CHAT_AZURE_API_VERSION'] = config['azure_api_version']
+        os.environ['CHAT_MODEL'] = config['azure_deployment']
+        
+        # Create a .env file for RDAgent with the proper format
         try:
             with open('.env.rdagent', 'w') as f:
-                f.write(f"OPENAI_API_TYPE=azure\n")
-                f.write(f"OPENAI_API_KEY={config['api_key']}\n")
-                f.write(f"OPENAI_API_BASE={config['azure_endpoint']}\n")
-                f.write(f"OPENAI_API_VERSION={config['azure_api_version']}\n")
-                f.write(f"OPENAI_DEPLOYMENT_NAME={config['azure_deployment']}\n")
+                f.write(f"USE_AZURE=True\n")
+                # Embedding settings
+                f.write(f"EMBEDDING_OPENAI_API_KEY={config['api_key']}\n")
+                f.write(f"EMBEDDING_AZURE_API_BASE={config['azure_endpoint']}\n")
+                f.write(f"EMBEDDING_AZURE_API_VERSION={config['azure_api_version']}\n")
+                f.write(f"EMBEDDING_MODEL=text-embedding-3-small\n")
+                # Chat settings
+                f.write(f"CHAT_OPENAI_API_KEY={config['api_key']}\n")
+                f.write(f"CHAT_AZURE_API_BASE={config['azure_endpoint']}\n")
+                f.write(f"CHAT_AZURE_API_VERSION={config['azure_api_version']}\n")
+                f.write(f"CHAT_MODEL={config['azure_deployment']}\n")
                 
             logger.info("Created .env.rdagent file to help RDAgent find Azure configuration")
+            
+            # Copy this file to .env for RDAgent to find it in the current directory
+            import shutil
+            shutil.copy2('.env.rdagent', '.env')
+            logger.info("Copied RDAgent environment configuration to .env")
+            
         except Exception as e:
             logger.warning(f"Could not create .env.rdagent file: {e}")
     else:
@@ -493,9 +514,11 @@ def install_rdagent():
         except Exception as e:
             logger.warning(f"RDAgent CLI check failed: {e}")
         
-        # Create rdagent config file for Azure OpenAI if environment variables are available
+        # Create RDAgent config file for Azure OpenAI according to documentation
+        # https://rdagent.readthedocs.io/en/latest/installation_and_configuration.html#azure-openai
         api_key = os.environ.get('AZURE_OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
         azure_endpoint = os.environ.get('AZURE_OPENAI_ENDPOINT') or os.environ.get('OPENAI_API_BASE')
+        azure_api_version = os.environ.get('AZURE_OPENAI_API_VERSION') or os.environ.get('OPENAI_API_VERSION', '2023-07-01-preview')
         azure_deployment = os.environ.get('AZURE_OPENAI_DEPLOYMENT') or os.environ.get('OPENAI_DEPLOYMENT_NAME')
         
         if api_key and azure_endpoint and azure_deployment:
@@ -506,14 +529,38 @@ def install_rdagent():
                 rdagent_config_path = os.path.expanduser("~/.rdagentrc")
                 with open(rdagent_config_path, 'w') as f:
                     f.write("[rdagent]\n")
-                    f.write("api_type = azure\n")
-                    f.write(f"api_key = {api_key}\n")
-                    f.write(f"api_base = {azure_endpoint}\n")
-                    f.write(f"api_version = {os.environ.get('AZURE_OPENAI_API_VERSION') or os.environ.get('OPENAI_API_VERSION', '2023-07-01-preview')}\n")
-                    f.write(f"deployment_name = {azure_deployment}\n")
-                    f.write("model = gpt-4\n")
+                    f.write("use_azure = True\n")
+                    
+                    # Embedding model settings
+                    f.write(f"embedding_openai_api_key = {api_key}\n")
+                    f.write(f"embedding_azure_api_base = {azure_endpoint}\n")
+                    f.write(f"embedding_azure_api_version = {azure_api_version}\n")
+                    f.write(f"embedding_model = text-embedding-3-small\n")
+                    
+                    # Chat model settings
+                    f.write(f"chat_openai_api_key = {api_key}\n")
+                    f.write(f"chat_azure_api_base = {azure_endpoint}\n")
+                    f.write(f"chat_azure_api_version = {azure_api_version}\n")
+                    f.write(f"chat_model = {azure_deployment}\n")
                 
                 logger.info(f"Created RDAgent config file at {rdagent_config_path}")
+                
+                # Also create .env in current directory for direct runs
+                with open('.env', 'w') as f:
+                    f.write(f"USE_AZURE=True\n")
+                    # Embedding settings
+                    f.write(f"EMBEDDING_OPENAI_API_KEY={api_key}\n")
+                    f.write(f"EMBEDDING_AZURE_API_BASE={azure_endpoint}\n")
+                    f.write(f"EMBEDDING_AZURE_API_VERSION={azure_api_version}\n")
+                    f.write(f"EMBEDDING_MODEL=text-embedding-3-small\n")
+                    # Chat settings
+                    f.write(f"CHAT_OPENAI_API_KEY={api_key}\n")
+                    f.write(f"CHAT_AZURE_API_BASE={azure_endpoint}\n")
+                    f.write(f"CHAT_AZURE_API_VERSION={azure_api_version}\n")
+                    f.write(f"CHAT_MODEL={azure_deployment}\n")
+                
+                logger.info(f"Created .env file in current directory for RDAgent")
+                
             except Exception as e:
                 logger.warning(f"Failed to create RDAgent config file: {e}")
         
@@ -789,14 +836,19 @@ def main():
                             env_script_path = os.path.join(model_config_dir, 'azure_env.sh')
                             with open(env_script_path, 'w') as f:
                                 f.write("#!/bin/bash\n")
-                                f.write(f"export OPENAI_API_TYPE=azure\n")
-                                f.write(f"export OPENAI_API_KEY={config['api_key']}\n")
-                                f.write(f"export OPENAI_API_BASE={config['azure_endpoint']}\n")
-                                f.write(f"export OPENAI_API_VERSION={config['azure_api_version']}\n")
-                                f.write(f"export OPENAI_DEPLOYMENT_NAME={config['azure_deployment']}\n")
-                                f.write(f"export AZURE_OPENAI_API_KEY={config['api_key']}\n")
-                                f.write(f"export AZURE_OPENAI_ENDPOINT={config['azure_endpoint']}\n")
-                                f.write(f"export AZURE_OPENAI_DEPLOYMENT={config['azure_deployment']}\n")
+                                f.write(f"export USE_AZURE=True\n")
+                                
+                                # Embedding settings
+                                f.write(f"export EMBEDDING_OPENAI_API_KEY={config['api_key']}\n")
+                                f.write(f"export EMBEDDING_AZURE_API_BASE={config['azure_endpoint']}\n")
+                                f.write(f"export EMBEDDING_AZURE_API_VERSION={config['azure_api_version']}\n")
+                                f.write(f"export EMBEDDING_MODEL=text-embedding-3-small\n")
+                                
+                                # Chat settings
+                                f.write(f"export CHAT_OPENAI_API_KEY={config['api_key']}\n")
+                                f.write(f"export CHAT_AZURE_API_BASE={config['azure_endpoint']}\n")
+                                f.write(f"export CHAT_AZURE_API_VERSION={config['azure_api_version']}\n")
+                                f.write(f"export CHAT_MODEL={config['azure_deployment']}\n")
                             
                             # Make the script executable
                             os.chmod(env_script_path, 0o755)
@@ -809,23 +861,73 @@ def main():
                                     shutil.copy2('.env.rdagent', os.path.join(model_config_dir, '.env'))
                                     logger.info(f"Copied RDAgent environment file to {model_config_dir}")
                                 
+                                # Create .rdagentrc in the model directory
+                                rdagent_config_path = os.path.join(model_config_dir, '.rdagentrc')
+                                with open(rdagent_config_path, 'w') as f:
+                                    f.write("[rdagent]\n")
+                                    f.write("use_azure = True\n")
+                                    
+                                    # Embedding model settings
+                                    f.write(f"embedding_openai_api_key = {config['api_key']}\n")
+                                    f.write(f"embedding_azure_api_base = {config['azure_endpoint']}\n")
+                                    f.write(f"embedding_azure_api_version = {config['azure_api_version']}\n")
+                                    f.write(f"embedding_model = text-embedding-3-small\n")
+                                    
+                                    # Chat model settings
+                                    f.write(f"chat_openai_api_key = {config['api_key']}\n")
+                                    f.write(f"chat_azure_api_base = {config['azure_endpoint']}\n")
+                                    f.write(f"chat_azure_api_version = {config['azure_api_version']}\n")
+                                    f.write(f"chat_model = {config['azure_deployment']}\n")
+                                
+                                logger.info(f"Created .rdagentrc in model directory")
+                                
                                 # Run RDAgent with explicit environment variables
                                 import subprocess
                                 env_vars = os.environ.copy()
                                 
-                                # Ensure Azure OpenAI environment variables are set
-                                env_vars['OPENAI_API_TYPE'] = 'azure'
-                                env_vars['OPENAI_API_KEY'] = config['api_key']
-                                env_vars['OPENAI_API_BASE'] = config['azure_endpoint']
-                                env_vars['OPENAI_API_VERSION'] = config['azure_api_version']
-                                env_vars['OPENAI_DEPLOYMENT_NAME'] = config['azure_deployment']
+                                # Ensure Azure OpenAI environment variables are set according to RDAgent docs
+                                env_vars['USE_AZURE'] = 'True'
+                                env_vars['EMBEDDING_OPENAI_API_KEY'] = config['api_key']
+                                env_vars['EMBEDDING_AZURE_API_BASE'] = config['azure_endpoint']
+                                env_vars['EMBEDDING_AZURE_API_VERSION'] = config['azure_api_version']
+                                env_vars['EMBEDDING_MODEL'] = 'text-embedding-3-small'
+                                env_vars['CHAT_OPENAI_API_KEY'] = config['api_key']
+                                env_vars['CHAT_AZURE_API_BASE'] = config['azure_endpoint']
+                                env_vars['CHAT_AZURE_API_VERSION'] = config['azure_api_version']
+                                env_vars['CHAT_MODEL'] = config['azure_deployment']
+                                
+                                # Try running RDAgent directly first to check if it works
+                                source_cmd = f"source {env_script_path} && rdagent --version"
+                                logger.info(f"Testing RDAgent with Azure environment: {source_cmd}")
+                                try:
+                                    test_result = subprocess.run(
+                                        source_cmd, 
+                                        shell=True,
+                                        env=env_vars,
+                                        check=False,
+                                        capture_output=True,
+                                        text=True
+                                    )
+                                    logger.info(f"RDAgent test result: {test_result.stdout.strip()}")
+                                    if test_result.stderr:
+                                        logger.warning(f"RDAgent test stderr: {test_result.stderr.strip()}")
+                                except Exception as e:
+                                    logger.warning(f"RDAgent test failed: {e}")
                                 
                                 logger.info("Calling RDAgent manager optimize_model method...")
+                                # Pass explicitly the Azure OpenAI config to the optimize_model method
                                 optimized_config = rdagent_manager.optimize_model(
                                     model_config=model.get_params(),
                                     data_path=os.path.join(args.output_dir, 'data'),
                                     output_path=model_config_dir,
-                                    max_iterations=args.max_iterations
+                                    max_iterations=args.max_iterations,
+                                    azure_config={
+                                        'use_azure': True,
+                                        'azure_endpoint': config['azure_endpoint'],
+                                        'azure_api_key': config['api_key'],
+                                        'azure_api_version': config['azure_api_version'],
+                                        'azure_deployment': config['azure_deployment']
+                                    }
                                 )
                                 
                                 if optimized_config:
