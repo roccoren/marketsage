@@ -144,29 +144,182 @@ class RDAgentManager:
             with open(backtest_results_path, 'w') as f:
                 json.dump(backtest_results, f, indent=4)
                 
-        # Prepare command
-        cmd = [
-            'rdagent', 'fin_factor',
-            '--data_path', data_path,
-            '--output_path', output_path,
-            '--log_dir', self.log_dir
-        ]
+        # Set up environment variables
+        env_vars = os.environ.copy()
+        if self.use_azure:
+            env_vars['USE_AZURE'] = 'True'
+            env_vars['EMBEDDING_OPENAI_API_KEY'] = self.api_key or os.environ.get('OPENAI_API_KEY', '')
+            env_vars['EMBEDDING_AZURE_API_BASE'] = self.azure_endpoint
+            env_vars['EMBEDDING_AZURE_API_VERSION'] = self.azure_api_version 
+            env_vars['EMBEDDING_MODEL'] = 'text-embedding-3-small'
+            env_vars['CHAT_OPENAI_API_KEY'] = self.api_key or os.environ.get('OPENAI_API_KEY', '')
+            env_vars['CHAT_AZURE_API_BASE'] = self.azure_endpoint
+            env_vars['CHAT_AZURE_API_VERSION'] = self.azure_api_version
+            env_vars['CHAT_MODEL'] = self.azure_deployment
+            
+            # Create local .env file in the output directory
+            env_file_path = os.path.join(output_path, '.env')
+            try:
+                with open(env_file_path, 'w') as f:
+                    f.write(f"USE_AZURE=True\n")
+                    f.write(f"EMBEDDING_OPENAI_API_KEY={env_vars['EMBEDDING_OPENAI_API_KEY']}\n")
+                    f.write(f"EMBEDDING_AZURE_API_BASE={env_vars['EMBEDDING_AZURE_API_BASE']}\n")
+                    f.write(f"EMBEDDING_AZURE_API_VERSION={env_vars['EMBEDDING_AZURE_API_VERSION']}\n")
+                    f.write(f"EMBEDDING_MODEL={env_vars['EMBEDDING_MODEL']}\n")
+                    f.write(f"CHAT_OPENAI_API_KEY={env_vars['CHAT_OPENAI_API_KEY']}\n")
+                    f.write(f"CHAT_AZURE_API_BASE={env_vars['CHAT_AZURE_API_BASE']}\n") 
+                    f.write(f"CHAT_AZURE_API_VERSION={env_vars['CHAT_AZURE_API_VERSION']}\n")
+                    f.write(f"CHAT_MODEL={env_vars['CHAT_MODEL']}\n")
+                logger.info(f"Created local .env file in {output_path}")
+            except Exception as e:
+                logger.warning(f"Failed to create local .env file: {e}")
         
-        if existing_factors:
-            cmd.extend(['--existing_factors', existing_factors_path])
+        # Create a batch script for Windows or shell script for Unix
+        if os.name == 'nt':
+            # Windows batch script
+            script_path = os.path.join(output_path, 'run_rdagent_factors.bat')
+            with open(script_path, 'w') as f:
+                # Set environment variables
+                for key, value in env_vars.items():
+                    if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
+                        f.write(f'SET {key}={value}\n')
+                
+                # Execute RDAgent command
+                f.write(f'rdagent fin_factor')
+                f.write(f' --data_path "{data_path}"')
+                f.write(f' --output_path "{output_path}"')
+                f.write(f' --log_dir "{self.log_dir}"')
+                f.write(f' --evolving_n {max_iterations}\n')
+                
+                # Add optional arguments
+                if existing_factors:
+                    f.write(f' --existing_factors "{existing_factors_path}"')
+                if backtest_results:
+                    f.write(f' --backtest_results "{backtest_results_path}"')
+        else:
+            # Unix shell script
+            script_path = os.path.join(output_path, 'run_rdagent_factors.sh')
+            with open(script_path, 'w') as f:
+                f.write("#!/bin/bash\n\n")
+                
+                # Set environment variables
+                for key, value in env_vars.items():
+                    if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
+                        f.write(f'export {key}="{value}"\n')
+                
+                # Execute RDAgent command
+                f.write(f'rdagent fin_factor')
+                f.write(f' --data_path "{data_path}"')
+                f.write(f' --output_path "{output_path}"')
+                f.write(f' --log_dir "{self.log_dir}"')
+                f.write(f' --evolving_n {max_iterations}')
+                
+                # Add optional arguments
+                if existing_factors:
+                    f.write(f' --existing_factors "{existing_factors_path}"')
+                if backtest_results:
+                    f.write(f' --backtest_results "{backtest_results_path}"')
             
-        if backtest_results:
-            cmd.extend(['--backtest_results', backtest_results_path])
+            # Make the script executable
+            os.chmod(script_path, 0o755)
             
-        if max_iterations:
-            cmd.extend(['--max_iterations', str(max_iterations)])
+        logger.info(f"Created RDAgent factors script at {script_path}")
+        
+        # Also create a Python script as an alternative approach
+        py_script_path = os.path.join(output_path, 'run_rdagent_factors.py')
+        with open(py_script_path, 'w') as f:
+            f.write("#!/usr/bin/env python\n")
+            f.write("import os\n")
+            f.write("import sys\n")
+            f.write("import json\n")
+            f.write("import logging\n")
+            f.write("import subprocess\n\n")
             
-        # Run the command
+            # Set up environment variables
+            f.write("# Set up environment variables\n")
+            for key, value in env_vars.items():
+                if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
+                    f.write(f"os.environ['{key}'] = '{value}'\n")
+            
+            f.write("\n# Set up arguments\n")
+            f.write(f"data_path = '{data_path}'\n")
+            f.write(f"output_path = '{output_path}'\n")
+            f.write(f"log_dir = '{self.log_dir}'\n")
+            f.write(f"evolving_n = {max_iterations}\n\n")
+            
+            # Setup paths to optional files
+            if existing_factors:
+                f.write(f"existing_factors_path = '{existing_factors_path}'\n")
+            if backtest_results:
+                f.write(f"backtest_results_path = '{backtest_results_path}'\n")
+            
+            f.write("# Set up logging\n")
+            f.write("logging.basicConfig(level=logging.INFO)\n\n")
+            
+            # Add the command to run
+            f.write("# Build rdagent command\n")
+            f.write("cmd = [\n")
+            f.write("    'rdagent', 'fin_factor',\n")
+            f.write("    '--data_path', data_path,\n")
+            f.write("    '--output_path', output_path,\n")
+            f.write("    '--log_dir', log_dir,\n")
+            f.write("    '--evolving_n', str(evolving_n)\n")
+            f.write("]\n\n")
+            
+            # Add optional arguments
+            if existing_factors:
+                f.write("# Add existing factors path\n")
+                f.write("cmd.extend(['--existing_factors', existing_factors_path])\n")
+            if backtest_results:
+                f.write("# Add backtest results path\n")
+                f.write("cmd.extend(['--backtest_results', backtest_results_path])\n")
+            
+            # Execute the command
+            f.write("\n# Execute rdagent command\n")
+            f.write("try:\n")
+            f.write("    print('Starting RDAgent factor evolution...')\n")
+            f.write("    result = subprocess.run(cmd, check=True, capture_output=True, text=True)\n")
+            f.write("    print('RDAgent stdout:', result.stdout)\n")
+            f.write("    if result.stderr:\n")
+            f.write("        print('RDAgent stderr:', result.stderr)\n")
+            f.write("    print('RDAgent factor evolution completed')\n")
+            f.write("except subprocess.CalledProcessError as e:\n")
+            f.write("    print(f'Error running RDAgent: {e}')\n")
+            f.write("    print(f'Error output: {e.stderr}')\n")
+            f.write("    sys.exit(1)\n")
+            f.write("except Exception as e:\n")
+            f.write("    print(f'Error running RDAgent: {e}')\n")
+            f.write("    sys.exit(1)\n")
+        
+        # Make the script executable
+        os.chmod(py_script_path, 0o755)
+        logger.info(f"Created RDAgent factor Python script at {py_script_path}")
+        
+        # Run the script
         try:
-            result = subprocess.run(cmd, 
-                                  check=True, 
-                                  capture_output=True, 
-                                  text=True)
+            logger.info(f"Running RDAgent factor script: {script_path}")
+            if os.name == 'nt':
+                result = subprocess.run(
+                    [script_path],
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    shell=True,
+                    env=env_vars
+                )
+            else:
+                result = subprocess.run(
+                    [script_path],
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    env=env_vars
+                )
+            
+            # Log the output
+            logger.info(f"RDAgent factor script stdout: {result.stdout}")
+            if result.stderr:
+                logger.warning(f"RDAgent factor script stderr: {result.stderr}")
             
             # Parse output to get the evolved factors
             factors_path = os.path.join(output_path, 'evolved_factors.json')
@@ -174,9 +327,48 @@ class RDAgentManager:
                 with open(factors_path, 'r') as f:
                     evolved_factors = json.load(f)
                 return evolved_factors
+            else:
+                # Check for any other JSON file that might contain factors
+                import glob
+                json_files = glob.glob(os.path.join(output_path, '*.json'))
+                for file_path in json_files:
+                    if file_path != existing_factors_path and file_path != (backtest_results_path if backtest_results else "") and 'factor' in os.path.basename(file_path).lower():
+                        try:
+                            with open(file_path, 'r') as f:
+                                potential_factors = json.load(f)
+                            # Check if this looks like a factors dictionary
+                            if isinstance(potential_factors, dict) and len(potential_factors) > 0:
+                                logger.info(f"Using alternative factors from {file_path}")
+                                return potential_factors
+                        except Exception:
+                            continue
         except Exception as e:
-            logger.error(f"Error running RDAgent: {e}")
-            return existing_factors or {}
+            logger.error(f"Error running RDAgent factor script: {e}")
+            # Fall back to the Python script if the shell script fails
+            try:
+                logger.info(f"Falling back to Python script: {py_script_path}")
+                result = subprocess.run(
+                    [sys.executable, py_script_path],
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    env=env_vars
+                )
+                
+                # Log the output
+                logger.info(f"RDAgent factor Python script stdout: {result.stdout}")
+                if result.stderr:
+                    logger.warning(f"RDAgent factor Python script stderr: {result.stderr}")
+                
+                # Check for output files again
+                factors_path = os.path.join(output_path, 'evolved_factors.json')
+                if os.path.exists(factors_path):
+                    with open(factors_path, 'r') as f:
+                        evolved_factors = json.load(f)
+                    return evolved_factors
+            except Exception as e2:
+                logger.error(f"Error running fallback Python script: {e2}")
+                return existing_factors or {}
             
         return existing_factors or {}
         
@@ -283,75 +475,143 @@ class RDAgentManager:
                 logger.info(f"Created local .env file in {output_path}")
             except Exception as e:
                 logger.warning(f"Failed to create local .env file: {e}")
+        
+        # Create a batch script for Windows or shell script for Unix
+        if os.name == 'nt':
+            # Windows batch script
+            script_path = os.path.join(output_path, 'run_rdagent.bat')
+            with open(script_path, 'w') as f:
+                # Set environment variables
+                for key, value in env_vars.items():
+                    if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
+                        f.write(f'SET {key}={value}\n')
+                
+                # Execute RDAgent command
+                f.write(f'rdagent fin_model')
+                f.write(f' --data_path "{data_path}"')
+                f.write(f' --output_path "{output_path}"')
+                f.write(f' --model_config "{model_config_path}"')
+                f.write(f' --log_dir "{self.log_dir}"')
+                f.write(f' --evolving_n {max_iterations}\n')
+                
+                # Add backtest results if provided
+                if backtest_results:
+                    f.write(f' --backtest_results "{backtest_results_path}"')
+        else:
+            # Unix shell script
+            script_path = os.path.join(output_path, 'run_rdagent.sh')
+            with open(script_path, 'w') as f:
+                f.write("#!/bin/bash\n\n")
+                
+                # Set environment variables
+                for key, value in env_vars.items():
+                    if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
+                        f.write(f'export {key}="{value}"\n')
+                
+                # Execute RDAgent command
+                f.write(f'rdagent fin_model')
+                f.write(f' --data_path "{data_path}"')
+                f.write(f' --output_path "{output_path}"')
+                f.write(f' --model_config "{model_config_path}"')
+                f.write(f' --log_dir "{self.log_dir}"')
+                f.write(f' --evolving_n {max_iterations}')
+                
+                # Add backtest results if provided
+                if backtest_results:
+                    f.write(f' --backtest_results "{backtest_results_path}"')
             
-        # Create a Python script to run RDAgent directly
-        script_path = os.path.join(output_path, 'run_rdagent.py')
-        with open(script_path, 'w') as f:
+            # Make the script executable
+            os.chmod(script_path, 0o755)
+        
+        logger.info(f"Created RDAgent script at {script_path}")
+        
+        # Also create a Python script as an alternative approach
+        py_script_path = os.path.join(output_path, 'run_rdagent.py')
+        with open(py_script_path, 'w') as f:
             f.write("#!/usr/bin/env python\n")
             f.write("import os\n")
             f.write("import sys\n")
             f.write("import json\n")
-            f.write("import logging\n\n")
+            f.write("import logging\n")
+            f.write("import subprocess\n\n")
             
+            # Set up environment variables
             f.write("# Set up environment variables\n")
             for key, value in env_vars.items():
                 if key.startswith(('USE_', 'EMBEDDING_', 'CHAT_', 'OPENAI_')):
                     f.write(f"os.environ['{key}'] = '{value}'\n")
             
-            f.write("\n# Import rdagent after setting environment variables\n")
-            f.write("try:\n")
-            f.write("    from rdagent.app.fin_model import main as fin_model_main\n")
-            f.write("    from rdagent.app.config import get_model_config\n")
-            f.write("except ImportError as e:\n")
-            f.write("    print(f'Error importing rdagent: {e}')\n")
-            f.write("    sys.exit(1)\n\n")
-            
-            f.write("# Set up arguments\n")
+            f.write("\n# Set up arguments\n")
             f.write(f"data_path = '{data_path}'\n")
             f.write(f"output_path = '{output_path}'\n")
             f.write(f"model_config_path = '{model_config_path}'\n")
             f.write(f"log_dir = '{self.log_dir}'\n")
-            f.write(f"max_iterations = {max_iterations}\n\n")
+            f.write(f"evolving_n = {max_iterations}\n\n")
+            
+            # Add backtest results if provided
+            if backtest_results:
+                f.write(f"backtest_results_path = '{backtest_results_path}'\n\n")
             
             f.write("# Set up logging\n")
             f.write("logging.basicConfig(level=logging.INFO)\n\n")
             
-            f.write("# Load model config\n")
-            f.write("with open(model_config_path, 'r') as f:\n")
-            f.write("    model_config = json.load(f)\n\n")
+            # Add the command to run
+            f.write("# Build rdagent command\n")
+            f.write("cmd = [\n")
+            f.write("    'rdagent', 'fin_model',\n")
+            f.write("    '--data_path', data_path,\n")
+            f.write("    '--output_path', output_path,\n")
+            f.write("    '--model_config', model_config_path,\n")
+            f.write("    '--log_dir', log_dir,\n")
+            f.write("    '--evolving_n', str(evolving_n)\n")
+            f.write("]\n\n")
             
-            f.write("# Call the RDAgent fin_model function directly\n")
+            # Add optional arguments
+            if backtest_results:
+                f.write("# Add backtest results path\n")
+                f.write("cmd.extend(['--backtest_results', backtest_results_path])\n\n")
+            
+            # Execute the command
+            f.write("# Execute rdagent command\n")
             f.write("try:\n")
             f.write("    print('Starting RDAgent optimization...')\n")
-            f.write("    # Create model_config object\n")
-            f.write("    cfg = get_model_config(\n")
-            f.write("        data_path=data_path,\n")
-            f.write("        output_path=output_path,\n")
-            f.write("        model_config=model_config_path,\n")
-            f.write("        log_dir=log_dir,\n")
-            f.write("        max_iterations=max_iterations\n")
-            f.write("    )\n")
-            f.write("    # Run the main function\n")
-            f.write("    fin_model_main(cfg)\n")
+            f.write("    result = subprocess.run(cmd, check=True, capture_output=True, text=True)\n")
+            f.write("    print('RDAgent stdout:', result.stdout)\n")
+            f.write("    if result.stderr:\n")
+            f.write("        print('RDAgent stderr:', result.stderr)\n")
             f.write("    print('RDAgent optimization completed')\n")
+            f.write("except subprocess.CalledProcessError as e:\n")
+            f.write("    print(f'Error running RDAgent: {e}')\n")
+            f.write("    print(f'Error output: {e.stderr}')\n")
+            f.write("    sys.exit(1)\n")
             f.write("except Exception as e:\n")
             f.write("    print(f'Error running RDAgent: {e}')\n")
             f.write("    sys.exit(1)\n")
         
         # Make the script executable
-        os.chmod(script_path, 0o755)
-        logger.info(f"Created RDAgent script at {script_path}")
+        os.chmod(py_script_path, 0o755)
+        logger.info(f"Created RDAgent Python script at {py_script_path}")
         
         # Run the script
         try:
             logger.info(f"Running RDAgent script: {script_path}")
-            result = subprocess.run(
-                [sys.executable, script_path],
-                check=True, 
-                capture_output=True, 
-                text=True,
-                env=env_vars
-            )
+            if os.name == 'nt':
+                result = subprocess.run(
+                    [script_path],
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    shell=True,
+                    env=env_vars
+                )
+            else:
+                result = subprocess.run(
+                    [script_path],
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    env=env_vars
+                )
             
             # Log the output
             logger.info(f"RDAgent script stdout: {result.stdout}")
@@ -369,7 +629,7 @@ class RDAgentManager:
                 import glob
                 json_files = glob.glob(os.path.join(output_path, '*.json'))
                 for file_path in json_files:
-                    if file_path != model_config_path and 'model' in os.path.basename(file_path).lower():
+                    if file_path != model_config_path and file_path != (backtest_results_path if backtest_results else ""):
                         try:
                             with open(file_path, 'r') as f:
                                 potential_config = json.load(f)
@@ -381,7 +641,31 @@ class RDAgentManager:
                             continue
         except Exception as e:
             logger.error(f"Error running RDAgent script: {e}")
-            return model_config
+            # Fall back to the Python script if the shell script fails
+            try:
+                logger.info(f"Falling back to Python script: {py_script_path}")
+                result = subprocess.run(
+                    [sys.executable, py_script_path],
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    env=env_vars
+                )
+                
+                # Log the output
+                logger.info(f"RDAgent Python script stdout: {result.stdout}")
+                if result.stderr:
+                    logger.warning(f"RDAgent Python script stderr: {result.stderr}")
+                
+                # Parse output to get the optimized model config
+                optimized_config_path = os.path.join(output_path, 'optimized_model.json')
+                if os.path.exists(optimized_config_path):
+                    with open(optimized_config_path, 'r') as f:
+                        optimized_config = json.load(f)
+                    return optimized_config
+            except Exception as e2:
+                logger.error(f"Error running fallback Python script: {e2}")
+                return model_config
             
         return model_config
         

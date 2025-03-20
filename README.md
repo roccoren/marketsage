@@ -1,78 +1,135 @@
 # StockScan
 
-StockScan is a stock analysis and backtesting system for developing, testing, and evaluating quantitative trading strategies. The project follows modular design principles to improve code maintainability and scalability.
+A Python package for stock analysis and prediction using machine learning models.
 
-## Features (Planned)
+## Features
 
-- **Data Management**: Support for multi-exchange data loading, processing, and storage
-- **Technical Indicators**: Rich technical analysis indicator calculation tools
-- **Strategy Development**: Flexible strategy development framework supporting various types of strategies
-- **Backtesting System**: Precise backtesting functionality to evaluate strategy performance
-- **Parameter Optimization**: Automatic optimization of strategy parameters to improve effectiveness
-- **Market Scanning**: Scan the market based on strategy signals to find trading opportunities
-- **Visualization**: Intuitive display of backtesting results and technical indicators
+- Stock data retrieval from multiple sources (yfinance, Qlib)
+- Technical indicator calculation (MA, RSI, MACD, etc.)
+- Multiple prediction models (LightGBM, XGBoost)
+- Visualization of prediction trends
+- Signal strength analysis for trading decisions
+- LLM integration for feature evolution and optimization with RDAgent (OpenAI and Azure OpenAI)
 
-## Project Status
+## Installation
 
-This project has been cleaned up and all legacy code has been removed. It now represents a clean slate for implementing a modern, well-organized stock analysis and backtesting system.
-
-## Planned Directory Structure
-
-```
-stockscan/
-├── data/                         # Data directory
-│   ├── raw/                      # Raw data
-│   ├── processed/                # Preprocessed data
-│   ├── features/                 # Feature data
-│   ├── labels/                   # Label data
-│   └── cache/                    # Cached data
-│
-├── stockscan/                    # Main code directory (to be implemented)
-│   ├── __init__.py               
-│   ├── main.py                   
-│   ├── core/                     # Core functionality
-│   ├── strategies/               # Strategy implementations
-│   │   └── technical/            # Technical analysis strategies
-│   ├── utils/                    # Utility classes
-│   └── scanner/                  # Scanner related
-│
-├── tests/                        # Test code (to be implemented)
-├── output/                       # Output directory
-├── logs/                         # Log files directory
-│
-├── .gitignore                    
-├── .dockerignore                 
-├── Dockerfile                    
-├── pyproject.toml                
-└── README.md                     
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/stockscan.git
+cd stockscan
 ```
 
-## Development
+2. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-### Prerequisites
+3. Install the package:
+```bash
+pip install -e .
+```
 
-- Python 3.8+
-- pip
+4. Install optional dependencies:
+```bash
+pip install lightgbm xgboost yfinance qlib matplotlib rdagent
+```
 
-### Future Development
+## Usage
 
-Future development will focus on implementing:
+### Basic Example
 
-1. Core data loading and processing functionality
-2. Technical analysis indicators
-3. Strategy framework
-4. Backtesting engine
-5. Visualization utilities
-6. Testing framework
+```python
+from stockscan.core.data_manager import get_stock_data
+from stockscan.core.model_factory import create_model
+from stockscan.core.prediction import predict_stock_movement
+from stockscan.utils.env_setup import setup_environment
 
-## Contribution Guidelines
+# Setup environment
+setup_environment()
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Create a Pull Request
+# Get stock data
+data = get_stock_data('AAPL', days=365, provider='yfinance')
+
+# Create model
+model = create_model('LightGBM')
+
+# Predict stock movement
+prediction = predict_stock_movement(model, data)
+print(f"Prediction: {prediction}")
+```
+
+### Running the Trio Stocks Example
+
+The package includes an example script that predicts movements for AAPL, MSFT, and NVDA:
+
+```bash
+python examples/trio_stocks_prediction.py
+```
+
+This will:
+1. Download historical data for the three stocks
+2. Train prediction models
+3. Generate predictions for each stock
+4. Create a visualization of prediction trends
+5. Provide trading recommendations
+
+## LLM Integration with RDAgent
+
+StockScan uses RDAgent to leverage large language models (LLMs) for feature evolution and model optimization.
+
+### OpenAI Integration
+
+```bash
+# Set OpenAI API Key
+export OPENAI_API_KEY=your-openai-api-key
+
+# Run with RDAgent enabled
+python examples/trio_stocks_prediction.py
+```
+
+### Azure OpenAI Integration
+
+StockScan supports using Azure OpenAI for feature evolution and model optimization with RDAgent:
+
+```bash
+python examples/azure_openai_example.py \
+  --azure_endpoint https://your-resource-name.openai.azure.com/ \
+  --azure_deployment your-gpt4-deployment-name \
+  --symbols AAPL,MSFT,NVDA \
+  --start_date 2022-01-01 \
+  --end_date 2023-01-01
+```
+
+Make sure to set your `OPENAI_API_KEY` environment variable with your Azure OpenAI API key:
+
+```bash
+export OPENAI_API_KEY=your-azure-openai-api-key
+```
+
+For more details on Azure OpenAI integration, see [Azure OpenAI Integration Guide](docs/azure_openai_integration.md).
+
+## Data Sources
+
+StockScan supports data from:
+
+- **yfinance**: Yahoo Finance data (default, requires internet)
+- **Qlib**: Microsoft's Qlib library (requires download of data files)
+
+### Setting up Qlib Data
+
+To use Qlib data:
+
+```bash
+python scripts/download_us_data.py
+```
+
+## Configuration
+
+Environment variables:
+
+- `OPENAI_API_KEY`: Required for RDAgent integration (works with both OpenAI and Azure OpenAI)
 
 ## License
 
-This project is licensed under the MIT License.
+MIT
