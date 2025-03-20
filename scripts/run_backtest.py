@@ -1,175 +1,182 @@
 #!/usr/bin/env python
-"""
-Script to run backtesting with Qlib integration
-"""
-
+import os
 import sys
-from pathlib import Path
-import argparse
 import logging
+import argparse
 from datetime import datetime
+import json
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 
-# Add the project root directory to the Python path
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root))
+# Add project root to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.data.loader import DataLoader
 from src.backtest.qlib_backtest import QlibBacktest
-from src.config.settings import (
-    DEFAULT_SYMBOLS,
-    OUTPUT_DIR,
-    PLOT_SETTINGS
-)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def parse_args():
+    parser = argparse.ArgumentParser(description='Run backtest')
+    
+    # Stock list file
+    parser.add_argument('stock_list', type=str, help='Path to stock list file')
+    
+    # Time periods
+    parser.add_argument('--historical-start', type=str, required=True, help='Start date for historical data (YYYY-MM-DD)')
+    parser.add_argument('--historical-end', type=str, required=True, help='End date for historical data (YYYY-MM-DD)')
+    parser.add_argument('--backtest-start', type=str, required=True, help='Start date for backtest (YYYY-MM-DD)')
+    parser.add_argument('--backtest-end', type=str, required=True, help='End date for backtest (YYYY-MM-DD)')
+    
+    # Benchmark
+    parser.add_argument('--benchmark', type=str, default='SPY', help='Benchmark symbol')
+    
+    # Strategy parameters
+    parser.add_argument('--strategy', type=str, choices=['topk', 'enhanced_indexing'], default='topk', help='Strategy type')
+    parser.add_argument('--topk', type=int, default=5, help='Number of stocks to select (for topk strategy)')
+    parser.add_argument('--n-drop', type=int, default=1, help='Number of stocks to drop in each rebalance (for topk strategy)')
+    
+    # Account
+    parser.add_argument('--account', type=float, default=100000.0, help='Initial account value')
+    
+    # Output
+    parser.add_argument('--output-dir', type=str, default='outputs/backtest', help='Output directory')
 
-def read_stock_list(file_path: str) -> list:
-    """Read stock symbols from a file"""
-    with open(file_path, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+    # Analysis mode
+    parser.add_argument('--analyze-symbol', type=str, help='Analyze a specific symbol for price targets')
+    
+    return parser.parse_args()
 
-def prepare_predictions(data: dict, symbols: list) -> pd.Series:
-    """
-    Prepare predictions from technical indicators
-    
-    Parameters
-    ----------
-    data : dict
-        Dictionary of DataFrames containing stock data
-    symbols : list
-        List of stock symbols
-        
-    Returns
-    -------
-    pd.Series
-        Series of prediction scores
-    """
-    predictions = {}
-    
-    for symbol in symbols:
-        if symbol not in data or data[symbol].empty:
-            continue
-            
-        df = data[symbol]
-        
-        # Calculate prediction score based on technical indicators
-        rsi = df['rsi'].iloc[-1]
-        macd_hist = df['macd'].iloc[-1] - df['signal'].iloc[-1]
-        stoch_k = df['stoch_k'].iloc[-1]
-        stoch_d = df['stoch_d'].iloc[-1]
-        bb_width = df['bb_width'].iloc[-1]
-        volume_ratio = df['volume_ratio'].iloc[-1]
-        momentum = df['momentum'].iloc[-1]
-        trend_direction = df['trend_direction'].iloc[-1]
-        trend_strength = df['trend_strength'].iloc[-1]
-        
-        # Combine indicators into a single score
-        score = (
-            (50 - abs(rsi - 50)) / 50 * 0.2 +  # RSI component (closer to 50 is better)
-            np.tanh(macd_hist) * 0.2 +  # MACD component
-            (50 - abs(stoch_k - 50)) / 50 * 0.1 +  # Stochastic component
-            (1 - bb_width) * 0.1 +  # Volatility component (lower is better)
-            (volume_ratio - 1) * 0.1 +  # Volume component
-            momentum / 10 * 0.1 +  # Momentum component
-            trend_direction * 0.1  # Trend direction component
-        )
-        
-        predictions[symbol] = score
-    
-    return pd.Series(predictions)
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('outputs/backtest.log')
+        ]
+    )
 
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description="Run backtesting with Qlib integration")
-    parser.add_argument("stock_file", help="File containing list of stock symbols")
-    parser.add_argument("--historical-start", type=str, required=True,
-                      help="Historical data start date in YYYY-MM-DD format")
-    parser.add_argument("--historical-end", type=str, required=True,
-                      help="Historical data end date in YYYY-MM-DD format")
-    parser.add_argument("--backtest-start", type=str, required=True,
-                      help="Backtest period start date in YYYY-MM-DD format")
-    parser.add_argument("--backtest-end", type=str, required=True,
-                      help="Backtest period end date in YYYY-MM-DD format")
-    parser.add_argument("--benchmark", type=str, default="SPY",
-                      help="Benchmark symbol for comparison")
-    parser.add_argument("--strategy", type=str, default="topk",
-                      choices=["topk", "enhanced_indexing"],
-                      help="Strategy type to use")
-    parser.add_argument("--topk", type=int, default=50,
-                      help="Number of stocks to hold in portfolio")
-    parser.add_argument("--n-drop", type=int, default=5,
-                      help="Number of stocks to drop each rebalance")
+def analyze_symbol(args):
+    """Analyze a specific symbol for price targets and trading signals"""
+    from src.data.loader import DataLoader
+    from src.prediction.price_targets import analyze_stock_for_trading
     
-    args = parser.parse_args()
+    # Load data for the symbol
+    loader = DataLoader()
+    data = loader.load_data(
+        symbols=[args.analyze_symbol],
+        start_date=args.historical_start,
+        end_date=args.backtest_end,
+        include_technicals=True
+    )
     
-    # Read stock list
-    symbols = read_stock_list(args.stock_file)
-    logger.info(f"Read {len(symbols)} symbols from {args.stock_file}")
+    if args.analyze_symbol not in data or data[args.analyze_symbol].empty:
+        print(f"No data available for {args.analyze_symbol}")
+        return
     
-    # Convert date strings to datetime objects
-    historical_start = datetime.strptime(args.historical_start, "%Y-%m-%d")
-    historical_end = datetime.strptime(args.historical_end, "%Y-%m-%d")
-    backtest_start = datetime.strptime(args.backtest_start, "%Y-%m-%d")
-    backtest_end = datetime.strptime(args.backtest_end, "%Y-%m-%d")
+    # Analyze the symbol
+    stock_data = data[args.analyze_symbol]
+    analysis = analyze_stock_for_trading(stock_data)
     
     # Create output directory
-    backtest_output_dir = OUTPUT_DIR / "backtest"
-    backtest_output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path("outputs/analysis")
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Load historical data
-    logger.info("Loading historical data...")
-    loader = DataLoader(symbols, historical_start, historical_end)
-    data = loader.load_data()
+    # Save analysis to file
+    with open(output_dir / f"{args.analyze_symbol}_analysis.json", "w") as f:
+        json.dump(analysis, f, indent=4)
     
-    # Prepare predictions
-    logger.info("Preparing predictions...")
-    predictions = prepare_predictions(data, symbols)
+    # Print analysis
+    print(f"\nAnalysis for {args.analyze_symbol} (as of {analysis['timestamp']}):")
+    print(f"Current Price: ${analysis['current_price']}")
+    print(f"Recommended Action: {analysis['action'].upper()}")
+    print("\nPrice Targets:")
+    print(f"Buy Price: ${analysis['price_targets']['buy_price']}")
+    print(f"Sell Price: ${analysis['price_targets']['sell_price']}")
+    print(f"Stop Loss: ${analysis['price_targets']['stop_loss']}")
     
-    # Initialize backtesting system
-    logger.info("Initializing backtesting system...")
-    backtest_system = QlibBacktest(
-        provider_uri=str(OUTPUT_DIR / "qlib_data"),
-        region='us',
-        start_time=args.backtest_start,
-        end_time=args.backtest_end,
-        instruments=symbols,
-        benchmark=args.benchmark,
-        strategy_type=args.strategy,
-        strategy_params={
+    # Print prediction
+    print("\nPrice Prediction:")
+    print(f"Direction: {analysis['prediction']['direction']}")
+    print(f"Forecast Price: ${analysis['prediction']['forecast_price']}")
+    print(f"Confidence: {analysis['prediction']['confidence']}%")
+    
+    if analysis['risk_reward_ratio']:
+        print(f"\nRisk/Reward Ratio: {analysis['risk_reward_ratio']}")
+    
+    print(f"\nSignal Strength - Buy: {analysis['buy_signal_strength']}, Sell: {analysis['sell_signal_strength']}")
+    print(f"\nAnalysis saved to {output_dir}/{args.analyze_symbol}_analysis.json")
+
+def main():
+    # Parse arguments
+    args = parse_args()
+    
+    # Set up logging
+    setup_logging()
+    
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # If analysis mode is enabled, analyze the symbol and exit
+    if args.analyze_symbol:
+        analyze_symbol(args)
+        return
+    
+    # Check if stock list file exists
+    if not os.path.exists(args.stock_list):
+        logging.error(f"Stock list file not found: {args.stock_list}")
+        return
+    
+    # Create strategy parameters
+    strategy_params = {}
+    if args.strategy == 'topk':
+        strategy_params = {
             'topk': args.topk,
             'n_drop': args.n_drop
         }
+    
+    # Create and run backtest
+    backtest = QlibBacktest(
+        start_time=args.backtest_start,
+        end_time=args.backtest_end,
+        instruments=args.stock_list,
+        benchmark=args.benchmark,
+        account=args.account,
+        strategy_type=args.strategy,
+        strategy_params=strategy_params,
     )
     
     # Run backtest
-    logger.info("Running backtest...")
-    metrics, backtest_result = backtest_system.run_backtest(predictions)
+    results = backtest.run_backtest(
+        historical_start=args.historical_start,
+        historical_end=args.historical_end
+    )
     
-    # Save results
-    logger.info("Saving results...")
-    backtest_system.save_results(backtest_result, metrics, str(backtest_output_dir))
+    # Log results
+    logging.info("Backtest Results:")
+    logging.info(f"Total Return: {results['total_return']:.4f}")
+    logging.info(f"Benchmark Return: {results['benchmark_return']:.4f}")
+    logging.info(f"Annual Return: {results['annual_return']:.4f}")
+    logging.info(f"Volatility: {results['volatility']:.4f}")
+    logging.info(f"Sharpe Ratio: {results['sharpe_ratio']:.4f}")
+    logging.info(f"Max Drawdown: {results['max_drawdown']:.4f}")
+    logging.info(f"Turnover: {results['turnover']:.4f}")
     
-    # Print results
-    logger.info("\nBacktest Results:")
-    logger.info("================")
-    logger.info(f"Strategy: {args.strategy}")
-    logger.info(f"Period: {args.backtest_start} to {args.backtest_end}")
-    logger.info(f"Benchmark: {args.benchmark}")
-    logger.info("\nPerformance Metrics:")
-    for metric, value in metrics.items():
-        if isinstance(value, float):
-            logger.info(f"{metric}: {value:.4f}")
-        else:
-            logger.info(f"{metric}: {value}")
+    # Print price predictions for top performers
+    if 'price_predictions' in results:
+        print("\nPrice Predictions for Portfolio Stocks:")
+        predictions = results['price_predictions']
+        for symbol, data in predictions.items():
+            print(f"\n{symbol}:")
+            print(f"  Current Price: ${data['current_price']}")
+            print(f"  Action: {data['action'].upper()}")
+            print(f"  Buy Target: ${data['buy_price']}")
+            print(f"  Sell Target: ${data['sell_price']}")
+            print(f"  Stop Loss: ${data['stop_loss']}")
+            print(f"  Forecast: ${data['forecast']} ({data['direction']}, {data['confidence']}% confidence)")
     
-    logger.info(f"\nResults saved to: {backtest_output_dir}")
+    # Print final message
+    print(f"\nBacktest completed. Results saved to {args.output_dir}")
 
 if __name__ == "__main__":
     main() 
