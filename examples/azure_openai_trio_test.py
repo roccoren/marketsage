@@ -51,6 +51,8 @@ def parse_args():
                       help='Download Qlib US data if needed')
     parser.add_argument('--install_rdagent', action='store_true',
                       help='Attempt to install RDAgent if not available')
+    parser.add_argument('--skip_rdagent_optimization', action='store_true',
+                      help='Skip model optimization with RDAgent')
     
     return parser.parse_args()
 
@@ -414,13 +416,44 @@ def install_rdagent():
     try:
         logger.info("Attempting to install RDAgent package...")
         import subprocess
+        
+        # First ensure pip is up to date
+        logger.info("Updating pip...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], 
+                      check=True, capture_output=True, text=True)
+        
+        # Install RDAgent with required dependencies
+        logger.info("Installing RDAgent...")
         result = subprocess.run([sys.executable, "-m", "pip", "install", "rdagent"], 
                                check=True, capture_output=True, text=True)
         logger.info(f"Installation output: {result.stdout}")
         
+        # Install additional dependencies that might be needed
+        logger.info("Installing additional dependencies...")
+        deps = ["openai>=1.0.0", "numpy", "pandas", "scikit-learn", "colorama"]
+        for dep in deps:
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", dep],
+                              check=True, capture_output=True, text=True)
+                logger.info(f"Installed {dep}")
+            except Exception as e:
+                logger.warning(f"Failed to install {dep}: {e}")
+        
         # Try to import to verify installation
         import importlib
         importlib.import_module('rdagent')
+        
+        # Check if rdagent CLI command works
+        try:
+            version_check = subprocess.run(['rdagent', '--version'], 
+                                          capture_output=True, text=True, check=False)
+            if version_check.returncode == 0:
+                logger.info(f"RDAgent CLI available: {version_check.stdout.strip()}")
+            else:
+                logger.warning(f"RDAgent CLI returned error: {version_check.stderr}")
+        except Exception as e:
+            logger.warning(f"RDAgent CLI check failed: {e}")
+        
         logger.info("RDAgent successfully installed.")
         return True
     except Exception as e:
@@ -487,10 +520,38 @@ def main():
         
         # Check if RDAgent is available
         rdagent_available = hasattr(rdagent_manager, 'is_available') and rdagent_manager.is_available
+        
+        # Check if API key is set (required for RDAgent)
+        if rdagent_available and not config['api_key']:
+            logger.warning("OpenAI API key is not set. RDAgent will not work properly.")
+            logger.warning("Please set the OPENAI_API_KEY environment variable.")
+            rdagent_available = False
     except Exception as e:
         logger.error(f"Error initializing RDAgent manager: {e}")
         rdagent_manager = None
         rdagent_available = False
+        
+        # Try to check if RDAgent is installed
+        try:
+            import importlib
+            rdagent_spec = importlib.util.find_spec('rdagent')
+            if rdagent_spec is None:
+                logger.error("RDAgent package is not installed")
+            else:
+                logger.info("RDAgent package is installed but initialization failed")
+                
+                # Try to get the version to provide more diagnostic information
+                try:
+                    import subprocess
+                    result = subprocess.run(['rdagent', '--version'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        logger.info(f"RDAgent version: {result.stdout.strip()}")
+                    else:
+                        logger.warning(f"Failed to get RDAgent version: {result.stderr.strip()}")
+                except Exception as e2:
+                    logger.warning(f"Error checking RDAgent version: {e2}")
+        except Exception as check_e:
+            logger.error(f"Error checking for RDAgent: {check_e}")
     
     # Try to install RDAgent if requested
     if not rdagent_available and args.install_rdagent:
@@ -618,14 +679,56 @@ def main():
                     
                     # Optimize model with RDAgent if available
                     try:
-                        if rdagent_available and hasattr(rdagent_manager, 'optimize_model'):
+                        if rdagent_available and hasattr(rdagent_manager, 'optimize_model') and not args.skip_rdagent_optimization:
                             logger.info(f"Optimizing {model_name} with RDAgent")
-                            optimized_config = rdagent_manager.optimize_model(
-                                model_config=model.get_params(),
-                                data_path=os.path.join(args.output_dir, 'data'),
-                                output_path=os.path.join(args.output_dir, f'rdagent_{model_name}'),
-                                max_iterations=args.max_iterations
-                            )
+                            
+                            # Create directory for model config
+                            model_config_dir = os.path.join(args.output_dir, f'rdagent_{model_name}')
+                            os.makedirs(model_config_dir, exist_ok=True)
+                            
+                            # Save model parameters to file for debugging
+                            model_config_path = os.path.join(model_config_dir, 'model_config.json')
+                            with open(model_config_path, 'w') as f:
+                                # Convert any non-serializable values to strings
+                                config_dict = {}
+                                for k, v in model.get_params().items():
+                                    try:
+                                        json.dumps({k: v})  # Test if serializable
+                                        config_dict[k] = v
+                                    except (TypeError, OverflowError):
+                                        config_dict[k] = str(v)
+                                json.dump(config_dict, f, indent=2)
+                            
+                            logger.info(f"Saved model config to {model_config_path}")
+                            
+                            try:
+                                optimized_config = rdagent_manager.optimize_model(
+                                    model_config=model.get_params(),
+                                    data_path=os.path.join(args.output_dir, 'data'),
+                                    output_path=model_config_dir,
+                                    max_iterations=args.max_iterations
+                                )
+                            except Exception as e:
+                                logger.error(f"RDAgent optimization error: {e}")
+                                logger.warning(f"Checking if RDAgent is properly configured...")
+                                
+                                # Try to run a simple RDAgent command to see if it's working
+                                try:
+                                    import subprocess
+                                    result = subprocess.run(
+                                        ['rdagent', '--version'], 
+                                        capture_output=True, 
+                                        text=True
+                                    )
+                                    logger.info(f"RDAgent version check: {result.stdout.strip()}")
+                                    if result.stderr:
+                                        logger.warning(f"RDAgent stderr: {result.stderr.strip()}")
+                                except Exception as e2:
+                                    logger.error(f"Failed to check RDAgent version: {e2}")
+                                
+                                # Continue with the unoptimized model
+                                logger.warning(f"Continuing with unoptimized {model_name} model")
+                                optimized_config = None
                             
                             # Update model if optimization was successful
                             if optimized_config and optimized_config != model.get_params():
