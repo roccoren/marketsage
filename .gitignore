@@ -27,6 +27,12 @@ env/
 ENV/
 .env
 .conda/
+.conda_env/
+.conda_pkgs/
+.conda_cache/
+conda-env/
+conda-bld/
+envs/
 
 # VSCode
 .vscode/
@@ -48,10 +54,14 @@ logs/*
 output/*
 !output/.gitkeep
 
+# Outputs directory (additional entry)
+outputs/
+
 config/*
 !config/default_config.yaml
 !config/exchanges/.gitkeep
 !config/strategies/.gitkeep
+!config/backtest_config.yaml
 
 # Documentation
 docs/_build/

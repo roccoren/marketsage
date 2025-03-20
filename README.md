@@ -1,15 +1,15 @@
-# StockScan
+# StockScan - Quantitative Trading Strategy Framework
 
-A Python package for stock analysis and prediction using machine learning models.
+A flexible and extensible framework for developing and backtesting quantitative trading strategies.
 
 ## Features
 
-- Stock data retrieval from multiple sources (yfinance, Qlib)
-- Technical indicator calculation (MA, RSI, MACD, etc.)
-- Multiple prediction models (LightGBM, XGBoost)
-- Visualization of prediction trends
-- Signal strength analysis for trading decisions
-- LLM integration for feature evolution and optimization with RDAgent (OpenAI and Azure OpenAI)
+- Dynamic data loading from multiple sources (yfinance, Alpha Vantage)
+- Modular strategy implementation with base class for easy extension
+- Comprehensive performance analytics and visualization
+- Risk management and position sizing
+- Support for multiple assets and portfolio management
+- Configurable parameters and settings
 
 ## Installation
 
@@ -19,117 +19,113 @@ git clone https://github.com/yourusername/stockscan.git
 cd stockscan
 ```
 
-2. Create a virtual environment:
+2. Create a virtual environment (recommended):
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install the package:
+3. Install dependencies:
 ```bash
-pip install -e .
+pip install -r requirements.txt
 ```
 
-4. Install optional dependencies:
-```bash
-pip install lightgbm xgboost yfinance qlib matplotlib rdagent
+## Project Structure
+
+```
+stockscan/
+├── src/
+│   ├── data/           # Data loading and processing
+│   ├── strategies/     # Trading strategy implementations
+│   ├── analytics/      # Performance analytics and visualization
+│   ├── utils/         # Utility functions
+│   └── config/        # Configuration settings
+├── scripts/           # Execution scripts
+├── data/             # Data storage
+│   ├── instruments/  # Stock symbols and metadata
+│   ├── calendars/    # Trading calendars
+│   └── features/     # Processed stock data
+├── outputs/          # Strategy outputs and visualizations
+├── tests/           # Unit tests
+├── requirements.txt # Project dependencies
+└── README.md       # Project documentation
 ```
 
 ## Usage
 
-### Basic Example
+1. Configure settings in `src/config/settings.py`
 
+2. Run the momentum strategy:
+```bash
+python scripts/run_strategy.py
+```
+
+3. View results in the `outputs` directory:
+- `returns.png`: Cumulative returns plot
+- `drawdown.png`: Drawdown analysis
+- `monthly_returns.png`: Monthly returns heatmap
+- `position_weights.png`: Position weights over time
+- `metrics.csv`: Performance metrics
+
+## Strategy Implementation
+
+To implement a new strategy:
+
+1. Create a new strategy class in `src/strategies/` that inherits from `BaseStrategy`
+2. Implement the required methods:
+   - `generate_signals()`
+   - `calculate_positions()`
+3. Add any additional methods specific to your strategy
+
+Example:
 ```python
-from stockscan.core.data_manager import get_stock_data
-from stockscan.core.model_factory import create_model
-from stockscan.core.prediction import predict_stock_movement
-from stockscan.utils.env_setup import setup_environment
+from src.strategies.base import BaseStrategy
 
-# Setup environment
-setup_environment()
-
-# Get stock data
-data = get_stock_data('AAPL', days=365, provider='yfinance')
-
-# Create model
-model = create_model('LightGBM')
-
-# Predict stock movement
-prediction = predict_stock_movement(model, data)
-print(f"Prediction: {prediction}")
+class MyStrategy(BaseStrategy):
+    def generate_signals(self, data):
+        # Implement signal generation logic
+        pass
+        
+    def calculate_positions(self, signals, data):
+        # Implement position sizing logic
+        pass
 ```
 
-### Running the Trio Stocks Example
+## Performance Analytics
 
-The package includes an example script that predicts movements for AAPL, MSFT, and NVDA:
+The framework includes comprehensive performance analytics:
 
-```bash
-python examples/trio_stocks_prediction.py
-```
-
-This will:
-1. Download historical data for the three stocks
-2. Train prediction models
-3. Generate predictions for each stock
-4. Create a visualization of prediction trends
-5. Provide trading recommendations
-
-## LLM Integration with RDAgent
-
-StockScan uses RDAgent to leverage large language models (LLMs) for feature evolution and model optimization.
-
-### OpenAI Integration
-
-```bash
-# Set OpenAI API Key
-export OPENAI_API_KEY=your-openai-api-key
-
-# Run with RDAgent enabled
-python examples/trio_stocks_prediction.py
-```
-
-### Azure OpenAI Integration
-
-StockScan supports using Azure OpenAI for feature evolution and model optimization with RDAgent:
-
-```bash
-python examples/azure_openai_example.py \
-  --azure_endpoint https://your-resource-name.openai.azure.com/ \
-  --azure_deployment your-gpt4-deployment-name \
-  --symbols AAPL,MSFT,NVDA \
-  --start_date 2022-01-01 \
-  --end_date 2023-01-01
-```
-
-Make sure to set your `OPENAI_API_KEY` environment variable with your Azure OpenAI API key:
-
-```bash
-export OPENAI_API_KEY=your-azure-openai-api-key
-```
-
-For more details on Azure OpenAI integration, see [Azure OpenAI Integration Guide](docs/azure_openai_integration.md).
-
-## Data Sources
-
-StockScan supports data from:
-
-- **yfinance**: Yahoo Finance data (default, requires internet)
-- **Qlib**: Microsoft's Qlib library (requires download of data files)
-
-### Setting up Qlib Data
-
-To use Qlib data:
-
-```bash
-python scripts/download_us_data.py
-```
+- Returns analysis (total, annual, daily)
+- Risk metrics (Sharpe ratio, Sortino ratio, max drawdown)
+- Trading metrics (win rate, profit factor)
+- Relative performance (alpha, beta, information ratio)
+- Visualization tools for returns, drawdown, and position weights
 
 ## Configuration
 
-Environment variables:
+Key configuration settings in `src/config/settings.py`:
 
-- `OPENAI_API_KEY`: Required for RDAgent integration (works with both OpenAI and Azure OpenAI)
+- Data sources and parameters
+- Strategy parameters
+- Portfolio parameters
+- Risk management settings
+- Performance metrics
+- Visualization settings
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Built with [Qlib](https://github.com/microsoft/qlib) from Microsoft Research
+- Data provided by [yfinance](https://github.com/ranaroussi/yfinance)
+- Visualization powered by [matplotlib](https://matplotlib.org/) and [seaborn](https://seaborn.pydata.org/)
