@@ -1,0 +1,25 @@
+{
+  "source": "synthetic",
+  "num_stocks": 5,
+  "date_range": "2023-01-01 00:00:00 to 2023-01-10 00:00:00",
+  "frequency": "daily",
+  "shape": "(10, 5)",
+  "columns": [
+    "STOCK_1",
+    "STOCK_2",
+    "STOCK_3",
+    "STOCK_4",
+    "STOCK_5"
+  ],
+  "dtypes": {
+    "STOCK_1": "float64",
+    "STOCK_2": "float64",
+    "STOCK_3": "float64",
+    "STOCK_4": "float64",
+    "STOCK_5": "float64"
+  },
+  "index_type": "<class 'pandas.core.indexes.datetimes.DatetimeIndex'>",
+  "memory_usage": 480,
+  "sample_rows": 10,
+  "description": "Synthetic stock price data for demonstration"
+}

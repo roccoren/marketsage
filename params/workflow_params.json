@@ -1,0 +1,20 @@
+{
+  "num_runs": 3,
+  "num_stocks": 5,
+  "num_days": 10,
+  "strategies": [
+    "topk",
+    "weighted",
+    "momentum"
+  ],
+  "complex_setting": {
+    "enable_advanced_features": true,
+    "risk_constraints": {
+      "max_position": 0.1,
+      "sector_limits": {
+        "tech": 0.3,
+        "healthcare": 0.2
+      }
+    }
+  }
+}

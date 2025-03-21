@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Utility script to check and fix Qlib import issues
+Utility script to check and fix Qlib import issues - includes both methods:
+1. Checking and creating missing modules
+2. Directly patching problematic files when needed
 """
 
 import os
@@ -240,33 +242,138 @@ class PortAnaRecord:
     return True
 
 
+def patch_record_temp():
+    """Directly patch the problematic record_temp.py file"""
+    qlib_path = get_qlib_path()
+    if not qlib_path:
+        print("Failed to find Qlib installation path")
+        return False
+
+    record_temp_path = os.path.join(qlib_path, "workflow", "record_temp.py")
+    
+    if not os.path.exists(record_temp_path):
+        print(f"record_temp.py not found at {record_temp_path}")
+        return False
+    
+    print(f"Patching {record_temp_path}")
+    
+    # Read the current content
+    with open(record_temp_path, "r") as f:
+        original_content = f.read()
+    
+    # Create a backup
+    backup_path = record_temp_path + ".backup"
+    if not os.path.exists(backup_path):
+        with open(backup_path, "w") as f:
+            f.write(original_content)
+        print(f"Created backup at {backup_path}")
+    
+    # Replace problematic imports with our fixed version
+    fixed_content = original_content.replace(
+        "from ..utils.serial import Serializable",
+        "from qlib.utils.serial import Serializable"
+    )
+    
+    fixed_content = fixed_content.replace(
+        "from ..log import get_module_logger",
+        "from qlib.log import get_module_logger"
+    )
+    
+    # Write the patched file
+    with open(record_temp_path, "w") as f:
+        f.write(fixed_content)
+    
+    print(f"Successfully patched {record_temp_path}")
+    return True
+
+
+def patch_evaluate_module():
+    """Patch the evaluate module if needed"""
+    qlib_path = get_qlib_path()
+    if not qlib_path:
+        return False
+    
+    evaluate_path = os.path.join(qlib_path, "workflow", "evaluate.py")
+    
+    if not os.path.exists(evaluate_path):
+        print(f"evaluate.py not found at {evaluate_path}")
+        return False
+    
+    print(f"Checking {evaluate_path}")
+    
+    # Read the current content
+    with open(evaluate_path, "r") as f:
+        original_content = f.read()
+    
+    # Check if patching is needed
+    if "from .record_temp import SignalRecord" in original_content:
+        # Create a backup
+        backup_path = evaluate_path + ".backup"
+        if not os.path.exists(backup_path):
+            with open(backup_path, "w") as f:
+                f.write(original_content)
+            print(f"Created backup at {backup_path}")
+        
+        # Replace problematic import
+        fixed_content = original_content.replace(
+            "from .record_temp import SignalRecord",
+            "from qlib.workflow.record_temp import SignalRecord"
+        )
+        
+        # Write the patched file
+        with open(evaluate_path, "w") as f:
+            f.write(fixed_content)
+        
+        print(f"Successfully patched {evaluate_path}")
+        return True
+    
+    print(f"No patching needed for {evaluate_path}")
+    return True
+
+
 def main():
-    """Main function to check and fix Qlib imports"""
-    print("=== Qlib Import Checker and Fixer ===")
-    version = check_qlib_version()
+    """Main function to check and fix Qlib import issues"""
+    # Step 1: Check qlib version
+    qlib_version = check_qlib_version()
     
-    if version is None:
+    if not qlib_version:
         print("Please install Qlib first")
-        return 1
+        sys.exit(1)
     
-    print("\nChecking imports:")
+    # Step 2: Check imports
+    print("\nChecking imports...")
     import_status = check_imports()
-    for imp, status in import_status.items():
-        print(f"  {imp}: {status}")
     
-    has_errors = any("Error" in status for status in import_status.values())
-    if has_errors:
+    has_issues = any(status != "OK" for status in import_status.values())
+    
+    if has_issues:
         print("\nIssues detected. Attempting to fix...")
-        success = create_missing_modules()
-        if success:
-            print("\nFixes applied. Please restart your application and try again.")
+        
+        # Try creating missing modules first
+        modules_created = create_missing_modules()
+        
+        # Then try patching record_temp.py as a fallback
+        record_temp_patched = patch_record_temp()
+        evaluate_patched = patch_evaluate_module()
+        
+        if not modules_created and not record_temp_patched and not evaluate_patched:
+            print("Failed to fix import issues automatically")
+            sys.exit(1)
+        
+        # Recheck imports after fixing
+        print("\nRechecking imports after fixes...")
+        import_status = check_imports()
+        has_issues = any(status != "OK" for status in import_status.values())
+        
+        if has_issues:
+            print("\nSome issues remain after automatic fixes. Manual intervention may be needed.")
         else:
-            print("\nUnable to apply fixes automatically.")
+            print("\nAll import issues have been fixed!")
     else:
         print("\nAll imports are working correctly!")
     
-    return 0
+    return import_status
 
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 

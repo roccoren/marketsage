@@ -1,0 +1,7 @@
+{
+  "provider_uri": "/Volumes/External Data/workspaces/stockscan/data",
+  "expression_cache": null,
+  "calendar_provider": "LocalCalendarProvider",
+  "start_time": "2015-01-01",
+  "end_time": "2023-12-31"
+}
