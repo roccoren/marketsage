@@ -125,3 +125,5 @@ mlartifacts/
 mlflow-tracking/
 mlflow.db
 mlruns.db
+results/
+temp
