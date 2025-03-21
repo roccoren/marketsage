@@ -1,7 +1,6 @@
 # Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
 
 # Data directories
-data/
 output/
 logs/
 
@@ -26,12 +25,6 @@ htmlcov/
 
 # Miniconda
 Miniconda*.sh
-
-# Migration files and backups
-stockscan_backup/
-*_backup/
-migrate_all.sh
-scripts/migrate_*.py
 
 # Large files
 *.zip

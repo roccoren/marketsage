@@ -117,3 +117,11 @@ scripts/migrate_*.py
 *.model
 *.joblib
 Miniconda*.sh
+
+# MLflow
+mlruns/
+mlflow/
+mlartifacts/
+mlflow-tracking/
+mlflow.db
+mlruns.db
