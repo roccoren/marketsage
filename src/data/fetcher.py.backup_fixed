@@ -1,0 +1,233 @@
+import argparse
+import os
+from datetime import datetime
+import mlflow
+from src.utils.init import init_mlflow, close_mlflow
+from src.config import MLFLOW_CONFIG 
+from qlib.constant import REG_US, REG_CN
+
+
+def default_dump_csvs_from_yahoo(stock_list=None, market_type="all", qlib_dir=None, start_date="2015-01-01", end_date=None, max_workers=16):
+def _dummy_to_avoid_recursion(stock_symbols=None, start_date=None, end_date=None, interval="1d", qlib_dir=None, region=None, max_workers=16):
+    """Implementation of Yahoo data downloader"""
+    print(f"Downloading data for {stock_symbols} from {start_date} to {end_date}")
+    print("Placeholder: This is where you would add Yahoo Finance data download and processing logic")
+    """Download data from Yahoo Finance and convert to Qlib format."""
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+    qlib_dir = qlib_dir or os.path.join(os.getcwd(), "data", "qlib_cn")
+    print(f"Using default_dump_csvs_from_yahoo for market {market_type} from {start_date} to {end_date}")
+    # Call dump_yahoo_data with CN region
+    dump_yahoo_data(
+        region="cn",
+        market=market_type,
+        symbols=stock_list,
+        start_date=start_date,
+        end_date=end_date,
+        target_dir=qlib_dir,
+        max_workers=max_workers,
+        track_mlflow=False  # Avoid double-tracking
+    )
+    @staticmethod
+    def dump_yahoo_data(region="us", market="all", start_date="2015-01-01", end_date=None,
+                       target_dir=None, symbols=None, max_workers=16, track_mlflow=True):
+        """Dump Yahoo Finance data to Qlib format using Qlib's built-in tools"""
+        if end_date is None:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        
+        region = region.lower()
+        qlib_region = REG_CN if region == "cn" else REG_US
+        
+        target_dir = target_dir or os.path.join(os.getcwd(), "data", f"qlib_{region}")
+        
+        print(f"Dumping Yahoo data for region {region}, market {market} to {target_dir}")
+        
+        # Log to MLflow if active
+        if track_mlflow:
+            run_id = init_mlflow(MLFLOW_CONFIG)
+            try:
+                mlflow.log_param("qlib_dump_region", region)
+                mlflow.log_param("qlib_dump_market", market)
+                mlflow.log_param("qlib_dump_start_date", start_date)
+                mlflow.log_param("qlib_dump_end_date", end_date)
+            except Exception as e:
+                print(f"Error logging to MLflow: {str(e)}")
+        
+        try:
+            # Call the appropriate dumper based on the region
+            if region == "cn":
+                # For China stocks
+                default_dump_csvs_from_yahoo(
+                    stock_list=symbols,
+                    market_type=market,
+                    qlib_dir=target_dir,
+                    start_date=start_date,
+                    end_date=end_date,
+                    max_workers=max_workers
+                )
+            else:
+                # For US stocks
+                dump_yahoo_data(
+                    stock_symbols=symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    interval="1d",
+                    qlib_dir=target_dir,
+                    max_workers=max_workers,
+                    region=qlib_region,
+
+def fetch_data(region="cn", market="csi300", start_date="2015-01-01", end_date=None, 
+             qlib_dir=None, max_workers=16, track=True):
+    """Fetch historical stock data using Qlib's built-in tools"""
+    # Set default end date to today if not provided
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Set default qlib_dir if not provided
+    if qlib_dir is None:
+        qlib_dir = os.path.join(os.getcwd(), "data", f"qlib_{region}")
+    
+    # Ensure the directory exists
+    os.makedirs(qlib_dir, exist_ok=True)
+    
+    # Initialize MLflow if requested
+    run_id = None
+    if track:
+        run_id = init_mlflow(MLFLOW_CONFIG)
+        
+        # Log parameters
+        mlflow.log_params({
+            "region": region,
+            "market": market,
+            "start_date": start_date,
+            "end_date": end_date,
+            "qlib_dir": qlib_dir,
+            "max_workers": max_workers,
+        })
+    
+    try:
+        print(f"Fetching data for {region}, market {market} from {start_date} to {end_date}")
+        print(f"Data will be saved to {qlib_dir}")
+        
+        # Call the appropriate dumper based on the region
+        if region.lower() == "cn":
+            print("Using China market dumper...")
+            default_dump_csvs_from_yahoo(
+                market_type=market,
+                qlib_dir=qlib_dir,
+                start_date=start_date,
+                end_date=end_date,
+                max_workers=max_workers,
+            )
+        else:
+            print("Using US market dumper...")
+            dump_yahoo_data(
+                start_date=start_date,
+                end_date=end_date,
+                interval="1d",
+                qlib_dir=qlib_dir,
+                region=REG_US,
+                market=market,
+                max_workers=max_workers,
+            )
+        
+        print(f"Data fetched successfully to {qlib_dir}")
+        
+        # Log success to MLflow
+        if track:
+            mlflow.log_param("fetch_status", "success")
+            
+        return qlib_dir
+    except Exception as e:
+        print(f"Error fetching data: {str(e)}")
+        
+        # Log error to MLflow
+        if track:
+            mlflow.log_param("fetch_status", "error")
+            mlflow.log_param("fetch_error", str(e))
+        
+        raise e
+    finally:
+                    stock_symbols=symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    interval="1d",
+                    qlib_dir=target_dir,
+                    max_workers=max_workers,
+                    region=qlib_region,
+                    market=market
+                )
+            
+            # Log success to MLflow
+            if track_mlflow:
+                mlflow.log_param("dump_status", "success")
+                
+            print(f"Data dumped successfully to {target_dir}")
+            return target_dir
+            
+        except Exception as e:
+            print(f"Error dumping data: {str(e)}")
+            
+            # Log error to MLflow
+            if track_mlflow:
+                mlflow.log_param("dump_status", "error")
+                mlflow.log_param("dump_error", str(e))
+            
+            raise e
+        finally:
+            # Close MLflow run if active
+            if track_mlflow:
+                close_mlflow()
+    
+    @staticmethod
+    def check_qlib_data(qlib_dir):
+        """Check if Qlib data exists and is valid"""
+        return exists_qlib_data(qlib_dir)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Fetch historical stock data")
+    parser.add_argument("--region", type=str, default="cn", choices=["cn", "us"], 
+                      help="Region to fetch data for (cn or us)")
+    parser.add_argument("--market", type=str, default="csi300", 
+                      help="Market to fetch data for (e.g., csi300, sp500)")
+    parser.add_argument("--start-date", type=str, default="2015-01-01", 
+                      help="Start date in YYYY-MM-DD format")
+    parser.add_argument("--end-date", type=str, default=None, 
+                      help="End date in YYYY-MM-DD format (default: today)")
+    parser.add_argument("--qlib-dir", type=str, default=None, 
+                      help="Directory to save Qlib data")
+    parser.add_argument("--max-workers", type=int, default=16, 
+                      help="Maximum number of worker processes")
+    parser.add_argument("--track", action="store_true", default=True,
+                      help="Whether to track with MLflow")
+    parser.add_argument("--use-yfinance", action="store_true", default=False,
+                      help="Use YahooDataFetcher instead of Qlib dumper")
+    parser.add_argument("--symbols-file", type=str, default=None,
+                      help="Path to file containing symbols (one per line)")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    
+    if args.use_yfinance:
+        # Use YahooDataFetcher
+        fetcher = YahooDataFetcher(region=args.region)
+        fetcher.fetch_data(
+            start_date=args.start_date,
+            end_date=args.end_date,
+            symbols_file=args.symbols_file,
+            track_mlflow=args.track
+        )
+    else:
+        # Use Qlib dumper
+        fetch_data(
+            region=args.region,
+            market=args.market,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            qlib_dir=args.qlib_dir,
+            max_workers=args.max_workers,
+            track=args.track
+        )
