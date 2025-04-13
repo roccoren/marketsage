@@ -1,0 +1,159 @@
+# Default configuration for Qlib-based quantitative analysis project
+
+# Storage configuration
+storage:
+  # Default storage backend (csv, sqlite, tsdb)
+  backend: csv
+  
+  # CSV storage configuration
+  csv:
+    data_dir: data/csv
+  
+  # SQLite storage configuration
+  sqlite:
+    db_path: data/sqlite/stocks.db
+  
+  # Time-series database configuration
+  tsdb:
+    connection_string: ""
+    fallback_dir: data/tsdb_fallback
+
+# Data acquisition configuration
+data_acquisition:
+  # Default start date for historical data
+  start_date: "2020-01-01"
+  
+  # Retry configuration
+  retry_count: 3
+  retry_delay: 5
+  
+  # Data update schedule (cron format)
+  update_schedule: "0 0 * * *"  # Daily at midnight
+
+# Forecasting configuration
+forecasting:
+  # Default forecast horizon (days)
+  horizon: 10
+  
+  # Default model type
+  model_type: ensemble
+  
+  # Model optimization
+  optimize_parameters: true
+  
+  # Feature engineering
+  window_sizes: [5, 10, 20, 50]
+  
+  # Action thresholds
+  thresholds:
+    strong_buy: 1.0   # Percentage change threshold for strong buy signal
+    buy: 0.5         # Percentage change threshold for buy signal
+    sell: -0.5       # Percentage change threshold for sell signal
+    strong_sell: -1.0 # Percentage change threshold for strong sell signal
+  
+  # Volatility analysis
+  volatility:
+    high_threshold: 2.0  # Standard deviations for high volatility
+    window: 20          # Window for volatility calculation
+  
+  # Ensemble weights
+  ensemble_weights:
+    linear: 0.3
+    random_forest: 0.7
+
+# Backtesting configuration
+backtesting:
+  # Default strategy
+  strategy: momentum
+  
+  # Initial capital for backtests
+  initial_capital: 10000.0
+  
+  # Parameter optimization
+  optimize_parameters: true
+  test_period: 0.3       # Fraction of data to use for testing
+  optimization_metric: sharpe_ratio  # Metric to optimize (sharpe_ratio, total_return, etc.)
+  
+  # Strategy parameters
+  strategies:
+    momentum:
+      thresholds: [0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03]
+    
+    mean_reversion:
+      windows: [5, 10, 15, 20, 25, 30]
+      std_devs: [1.0, 1.5, 2.0, 2.5, 3.0]
+    
+    forecast_based:
+      thresholds: [0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03]
+  
+  # Performance evaluation
+  evaluation:
+    min_trades: 10        # Minimum number of trades for valid backtest
+    required_metrics:     # Required performance metrics
+      - sharpe_ratio
+      - max_drawdown
+      - win_rate
+      - total_return
+
+# MLflow configuration
+mlflow:
+  # Experiment name
+  experiment_name: qlib_workflow
+  
+  # Tracking URI (empty for local)
+  tracking_uri: ""
+  
+  # Artifact directory
+  artifact_dir: mlruns
+
+# Logging configuration
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: INFO
+  
+  # Log file
+  file: logs/qlib_workflow.log
+  
+  # Maximum log file size in bytes
+  max_size: 10485760  # 10 MB
+  
+  # Number of backup log files
+  backup_count: 5
+  
+  # Enable console logging
+  console: true
+  
+  # Enable remote logging
+  remote:
+    enabled: false
+    host: ""
+    port: 0
+
+# Error handling configuration
+error_handling:
+  # Enable email notifications
+  email_notifications:
+    enabled: false
+    smtp_server: ""
+    smtp_port: 587
+    sender: ""
+    recipients: []
+    subject_prefix: "[QLIB ERROR]"
+
+# Asynchronous processing configuration
+async:
+  # Maximum number of threads in thread pool
+  max_threads: 10
+  
+  # Maximum number of concurrent tasks
+  max_concurrent_tasks: 5
+
+# Event dispatcher configuration
+events:
+  # Enable event dispatcher
+  enabled: true
+  
+  # Event handlers
+  handlers:
+    log_events: true
+    store_events: false

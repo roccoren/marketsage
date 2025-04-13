@@ -1,0 +1,11 @@
+### Project Folder Mapping
+- **Core Directories:**
+  - `/src`: Source code.
+  - `/tests`: Test suites.
+  - `/docs`: Project documentation.
+  - `/config`: Configuration files.
+  - `/data`: Data resources.
+- **Special Directories:**
+  - `/.clinerules`: AI configuration and project rules.
+  - `/tasks`: Active development tasks.
+  - `/utils`: Utility scripts.

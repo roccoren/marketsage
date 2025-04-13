@@ -1,0 +1,34 @@
+### General Guidelines
+- **Language:** All code, comments, and documentation must be written in English.
+- **Review Process:** A review is required after every file change. Do not alter README or documentation files without explicit permission.
+- **Development Workflow:** Follow the five phases:
+  1. Requirements and Clarifications
+  2. Exhaustive Search and Planning
+  3. User Validation
+  4. Implementation
+  5. Optimization
+
+### Python-Specific Guidelines
+- **Code Quality:** 
+  - Adhere to PEP8 standards.
+  - Utilize linters like pylint and static type checkers like mypy.
+  - Enforce the use of type hints.
+- **Dependency Management:**
+  - Pin dependency versions using `requirements.txt` or `Pipfile.lock` for reproducible builds.
+- **Virtual Environment Management:**
+  - Use isolated virtual environments (e.g., venv, virtualenv, or pipenv) with a standardized naming convention.
+- **Docstrings:**
+  - Follow PEP257 for comprehensive docstrings.
+  - Maintain a consistent style across modules and functions.
+- **Logging & Instrumentation:**
+  - Use Loguru for structured logging.
+  - Adhere to expanded guidelines including log rotation policies.
+  - Apply specific formatting rules including timestamp format, log level formatting, and standardized message structure.
+- **Error Handling:**
+  - Implement retries and fallback strategies.
+  - Log exceptions clearly.
+- **Asynchronous Operations:**
+  - Leverage asyncio for I/O-bound tasks and proper concurrency management.
+- **Testing Strategy:**
+  - Require thorough testing using pytest.
+  - Include both unit and integration tests, integrated within CI/CD pipelines.
