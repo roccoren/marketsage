@@ -13,6 +13,7 @@ import logging
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
+import mlflow
 
 # Add project root to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +23,7 @@ from modules.parameter_optimizer import StockParameterManager
 from modules.market_analyzer import MarketAnalyzer
 from modules.storage import StorageManager
 from modules.backtesting import TestBacktestManager
+from modules.mlflow_integration import MLflowManager
 
 # Configure logging
 logging.basicConfig(
@@ -202,6 +204,27 @@ def parse_args():
         type=str,
         default='data/results',
         help='Directory for saving results'
+    )
+    
+    # MLflow arguments
+    parser.add_argument(
+        '--mlflow-tracking-uri',
+        type=str,
+        default=None,
+        help='MLflow tracking URI (default: local mlruns directory)'
+    )
+    
+    parser.add_argument(
+        '--experiment-name',
+        type=str,
+        default='stock_analysis',
+        help='MLflow experiment name'
+    )
+    
+    parser.add_argument(
+        '--disable-mlflow',
+        action='store_true',
+        help='Disable MLflow tracking'
     )
     
     return parser.parse_args()
@@ -390,8 +413,51 @@ def main():
         signals_df = pd.DataFrame(signal_predictions)
         
         output_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-        results_df.to_csv(os.path.join(args.output_dir, f"stock_analysis_{output_time}.csv"))
-        signals_df.to_csv(os.path.join(args.output_dir, f"signal_predictions_{output_time}.csv"))
+        results_csv = os.path.join(args.output_dir, f"stock_analysis_{output_time}.csv")
+        signals_csv = os.path.join(args.output_dir, f"signal_predictions_{output_time}.csv")
+        
+        # Save to CSV files
+        results_df.to_csv(results_csv)
+        signals_df.to_csv(signals_csv)
+        
+        # Log to MLflow if enabled
+        if not args.disable_mlflow:
+            try:
+                # Initialize MLflow manager
+                mlflow_manager = MLflowManager(
+                    experiment_name=args.experiment_name,
+                    tracking_uri=args.mlflow_tracking_uri
+                )
+                
+                # Start a new run
+                run_name = f"analysis_{output_time}"
+                mlflow_manager.start_run(run_name)
+                
+                # Log parameters
+                params = {
+                    "data_start_date": args.data_start_date,
+                    "data_end_date": args.data_end_date,
+                    "backtest_start_date": args.backtest_start_date,
+                    "backtest_end_date": args.backtest_end_date,
+                    "symbols_count": len(symbols),
+                    "timestamp": datetime.now().isoformat()
+                }
+                mlflow_manager.log_parameters(params)
+                
+                # Log stock analysis results
+                mlflow_manager.log_stock_analysis(results_df)
+                
+                # Log trading signals
+                mlflow_manager.log_trading_signals(signals_df)
+                
+                # End the MLflow run
+                mlflow_manager.end_run()
+                
+                logger.info(f"Results logged to MLflow experiment: {args.experiment_name}")
+                logger.info(f"View results with: mlflow ui")
+                
+            except Exception as e:
+                logger.error(f"Error logging to MLflow: {e}")
         
         # Display summary
         if not results_df.empty:

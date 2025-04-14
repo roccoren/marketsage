@@ -17,6 +17,11 @@ pyyaml>=6.0.0  # For YAML configuration files
 mlflow>=2.8.0
 psycopg2-binary>=2.9.0  # For PostgreSQL connection
 
+# Dashboard and visualization
+streamlit>=1.30.0  # For interactive dashboard
+plotly>=5.18.0  # For interactive charts
+altair>=5.1.0  # For declarative visualizations
+
 # Scheduling and async processing
 apscheduler>=3.9.0  # For scheduled data updates
 asyncio>=3.4.3  # For asynchronous operations
