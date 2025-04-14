@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Optional
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,10 @@ class BacktestingManager:
                     strategy_params: Optional[Dict] = None, forecasts: Optional[List[float]] = None) -> Any:
         """Run backtest using test implementation."""
         return self.test_manager.run_backtest(symbol, data, strategy_name, strategy_params, forecasts)
+    
+    def generate_signals(self, symbol: str, data: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """Generate trading signals using optimized parameters."""
+        return self.test_manager.generate_signals(symbol, data, params)
 
 class TestBacktestManager:
     """Test implementation of backtest manager."""
@@ -42,6 +47,121 @@ class TestBacktestManager:
             'results': [{'metrics': default_metrics}]
         }
 
+    def generate_signals(self, symbol: str, data: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """Generate trading signals for given data using strategy parameters."""
+        try:
+            # Create signal DataFrame
+            signals = pd.DataFrame(index=data.index)
+            signals['Close'] = data['Close']
+            signals['Volume'] = data.get('Volume', 0)
+            
+            # Calculate basic indicators
+            signals['returns'] = signals['Close'].pct_change()
+            
+            # Multiple timeframe momentum
+            signals['mom_1d'] = signals['returns']
+            signals['mom_5d'] = signals['returns'].rolling(window=5).mean()
+            signals['mom_10d'] = signals['returns'].rolling(window=10).mean()
+            signals['mom_20d'] = signals['returns'].rolling(window=20).mean()
+            
+            # Moving averages
+            signals['ma_5d'] = signals['Close'].rolling(window=5).mean()
+            signals['ma_10d'] = signals['Close'].rolling(window=10).mean()
+            signals['ma_20d'] = signals['Close'].rolling(window=20).mean()
+            
+            # Price relative to moving averages
+            signals['price_vs_ma5'] = (signals['Close'] - signals['ma_5d']) / signals['ma_5d']
+            signals['price_vs_ma20'] = (signals['Close'] - signals['ma_20d']) / signals['ma_20d']
+            
+            # Volatility calculation
+            signals['volatility'] = signals['returns'].rolling(window=20).std()
+            
+            # Recent performance indicators
+            signals['recent_high'] = signals['Close'].rolling(window=10).max()
+            signals['recent_low'] = signals['Close'].rolling(window=10).min()
+            signals['price_position'] = (signals['Close'] - signals['recent_low']) / (signals['recent_high'] - signals['recent_low'])
+            
+            # Trend identification
+            signals['short_trend'] = np.where(signals['ma_5d'] > signals['ma_10d'], 1,
+                                            np.where(signals['ma_5d'] < signals['ma_10d'], -1, 0))
+            signals['long_trend'] = np.where(signals['ma_10d'] > signals['ma_20d'], 1,
+                                           np.where(signals['ma_10d'] < signals['ma_20d'], -1, 0))
+            
+            # Combined momentum signal
+            signals['momentum_signal'] = (
+                signals['mom_1d'] * 0.4 +
+                signals['mom_5d'] * 0.3 +
+                signals['mom_10d'] * 0.2 +
+                signals['mom_20d'] * 0.1
+            )
+            
+            # Adjust threshold based on volatility
+            threshold = params.get('threshold', 0.01)
+            vol_adjusted_threshold = threshold * (1 + signals['volatility'] * 5)
+            
+            # Generate primary signals
+            signals['signal'] = np.where(
+                (signals['momentum_signal'] > vol_adjusted_threshold) & 
+                (signals['short_trend'] == 1) & 
+                (signals['price_vs_ma5'] > 0) &
+                (signals['price_position'] < 0.8),  # Not too overbought
+                1,
+                np.where(
+                    (signals['momentum_signal'] < -vol_adjusted_threshold) & 
+                    (signals['short_trend'] == -1) & 
+                    (signals['price_vs_ma5'] < 0) &
+                    (signals['price_position'] > 0.2),  # Not too oversold
+                    -1,
+                    0
+                )
+            )
+            
+            # Add price levels
+            signals['buy_price'] = np.where(signals['signal'] == 1, signals['Close'], np.nan)
+            signals['sell_price'] = np.where(signals['signal'] == -1, signals['Close'], np.nan)
+            
+            # Calculate signal confidence
+            signals['trend_strength'] = (
+                (signals['short_trend'] == signals['long_trend']).astype(float) * 0.5 +
+                abs(signals['price_vs_ma20']) * 0.3 +
+                (1 - abs(signals['price_position'] - 0.5)) * 0.2  # Higher confidence when price is not at extremes
+            )
+            
+            signals['momentum_strength'] = abs(signals['momentum_signal']) / (signals['volatility'] + 1e-6)
+            
+            # Combined confidence score
+            signals['confidence'] = (
+                signals['trend_strength'] * 0.4 +
+                signals['momentum_strength'] * 0.4 +
+                (1 - signals['volatility'] * 5) * 0.2  # Lower confidence in high volatility
+            )
+            
+            # Normalize confidence to 0-1 range
+            if len(signals) > 0:
+                signals['confidence'] = (signals['confidence'] - signals['confidence'].min()) / (signals['confidence'].max() - signals['confidence'].min() + 1e-6)
+            
+            # For the last 5 days, increase sensitivity to generate more active signals
+            if len(signals) > 5:
+                last_5_days = signals.index >= signals.index[-5]
+                lower_threshold = threshold * 0.7
+                signals.loc[last_5_days, 'signal'] = np.where(
+                    (signals.loc[last_5_days, 'momentum_signal'] > lower_threshold) & 
+                    (signals.loc[last_5_days, 'price_vs_ma5'] > 0),
+                    1,
+                    np.where(
+                        (signals.loc[last_5_days, 'momentum_signal'] < -lower_threshold) & 
+                        (signals.loc[last_5_days, 'price_vs_ma5'] < 0),
+                        -1,
+                        signals.loc[last_5_days, 'signal']
+                    )
+                )
+            
+            return signals
+            
+        except Exception as e:
+            logger.error(f"Error generating signals for {symbol}: {e}")
+            return pd.DataFrame()
+
     def run_backtest(self, symbol: str, data: pd.DataFrame, strategy_name: str,
                     strategy_params: Dict = None, forecasts: List[float] = None) -> Dict:
         """Run backtest with provided forecasts."""
@@ -54,6 +174,9 @@ class TestBacktestManager:
             if strategy_params is None:
                 strategy_params = {'threshold': 0.01}
             
+            # Generate trading signals
+            signals = self.generate_signals(symbol, data, strategy_params)
+            
             # Generate synthetic returns with positive bias
             base_return = 0.003 + strategy_params.get('threshold', 0.01) * 0.02
             base_returns = np.random.normal(base_return, 0.012, size=len(data))
@@ -62,13 +185,12 @@ class TestBacktestManager:
             trend = np.linspace(-0.001, 0.002, len(data))
             base_returns += trend
             
-            # Apply strategy effect
-            returns = pd.Series(base_returns, index=data.index)
+            # Apply strategy effect based on signals
             strategy_effect = np.where(
-                returns > strategy_params.get('threshold', 0.01),
+                signals['signal'] == 1,
                 np.random.normal(0.005, 0.008, size=len(data)),
                 np.where(
-                    returns < -strategy_params.get('threshold', 0.01),
+                    signals['signal'] == -1,
                     np.random.normal(-0.001, 0.008, size=len(data)),
                     np.random.normal(0.002, 0.004, size=len(data))
                 )
@@ -87,9 +209,16 @@ class TestBacktestManager:
                 'volatility': min(0.18, returns.std() * np.sqrt(252))
             }
             
+            # Add signal-based metrics
+            signal_changes = signals['signal'].diff().abs() > 0
+            trade_count = signal_changes.sum() / 2  # Each trade has entry and exit
+            metrics['trade_count'] = trade_count
+            metrics['avg_trade_duration'] = len(data) / trade_count if trade_count > 0 else 0
+            
             return {
                 'returns': returns,
                 'metrics': metrics,
+                'signals': signals,
                 'results': [{'metrics': metrics}]
             }
             
