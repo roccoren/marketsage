@@ -59,13 +59,15 @@ class MLflowManager:
                 logger.info(f"Ended previous MLflow run: {active_run.info.run_id}")
 
             # End any active Qlib recorder
-            # End any active Qlib recorder
             try:
-                if R.get_recorder() is not None:
-                    R.end()
-                    logger.info("Ended previous Qlib recorder")
-            except (ValueError, AttributeError):
-                pass
+                recorder = R.get_recorder()
+                if recorder is not None and hasattr(recorder, 'close'):
+                    recorder.close()
+                elif recorder is not None and hasattr(recorder, 'stop'):
+                    recorder.stop()
+                logger.info("Ended previous Qlib recorder")
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Failed to end Qlib recorder: {e}")
 
             if run_name is None:
                 run_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -187,35 +189,32 @@ def log_experiment(data, forecasts, backtest_results):
                 "symbols": ",".join(data.columns.get_level_values(1).unique()) if isinstance(data, pd.DataFrame) else "unknown",
                 "forecast_horizon": len(forecasts) if isinstance(forecasts, list) else "unknown",
                 "timestamp": datetime.now().isoformat(),
-                "qlib_region": R.get_context()["qlib_config"].get("region", "us"),
-                "qlib_model_type": R.get_context().get("model_type", "unknown")
+                "qlib_region": "us",  # Default to US market
+                "model_type": "ensemble"  # Default model type
             }
             mlflow_manager.log_parameters(params)
             
-            # Log metrics with Qlib analysis
+            # Log metrics
             if isinstance(backtest_results, dict):
                 for symbol, results in backtest_results.items():
-                    # Get Qlib's risk analysis metrics
-                    risk_metrics = R.get_recorder().list_metrics()
-                    
-                    # Combine with backtest results
-                    combined_metrics = {**results, **risk_metrics}
-                    metrics = {f"{symbol}_{k}": v for k, v in combined_metrics.items()}
+                    metrics = {f"{symbol}_{k}": v for k, v in results.items()}
                     mlflow_manager.log_metrics(metrics)
             
-            # Log predictions using Qlib's SignalRecord
+            # Log forecasts directly
             if forecasts:
-                recorder = R.get_recorder()
-                SignalRecord(recorder=recorder).log_pred(pd.DataFrame(forecasts))
+                forecast_df = pd.DataFrame(forecasts, columns=['Forecast'])
+                forecast_path = "forecasts.csv"
+                forecast_df.to_csv(forecast_path)
+                mlflow_manager.log_artifact(forecast_path)
+                os.remove(forecast_path)
             
             # Log artifacts with additional Qlib context
             if isinstance(data, pd.DataFrame) and not data.empty:
                 # Save data description with Qlib features
+                # Save data description with basic statistics
                 data_desc_path = "data_description.txt"
                 with open(data_desc_path, "w") as f:
-                    f.write("Qlib Feature Analysis:\n")
-                    f.write(str(R.get_recorder().list_features()))
-                    f.write("\n\nData Statistics:\n")
+                    f.write("Data Statistics:\n")
                     f.write(str(data.describe()))
                 mlflow_manager.log_artifact(data_desc_path)
                 os.remove(data_desc_path)
@@ -224,17 +223,23 @@ def log_experiment(data, forecasts, backtest_results):
                 if 'Close' in data.columns:
                     plt.figure(figsize=(10, 6))
                     data['Close'].plot()
-                    plt.title('Stock Close Prices with Qlib Predictions')
+                    plt.title('Stock Price Analysis')
                     plt.xlabel('Date')
                     plt.ylabel('Price')
                     plt.tight_layout()
                     mlflow_manager.log_figure(plt.gcf(), "charts")
                     plt.close()
             
-            # Log experiment config
-            config_path = "qlib_config.json"
+            # Log basic experiment config
+            config_path = "experiment_config.json"
+            config = {
+                "timestamp": datetime.now().isoformat(),
+                "region": "us",
+                "model_type": "ensemble",
+                "forecast_horizon": len(forecasts) if isinstance(forecasts, list) else 0
+            }
             with open(config_path, "w") as f:
-                json.dump(R.get_context(), f, default=str)
+                json.dump(config, f, default=str)
             mlflow_manager.log_artifact(config_path)
             os.remove(config_path)
             
@@ -242,4 +247,12 @@ def log_experiment(data, forecasts, backtest_results):
         finally:
             # End both MLflow run and Qlib recorder
             mlflow_manager.end_run()
-            R.end()
+            # Close Qlib recorder if available
+            try:
+                recorder = R.get_recorder()
+                if recorder is not None and hasattr(recorder, 'close'):
+                    recorder.close()
+                elif recorder is not None and hasattr(recorder, 'stop'):
+                    recorder.stop()
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Failed to end Qlib recorder: {e}")
