@@ -1,9 +1,15 @@
-# Generated files
-data/results/
-data/cache/
-*.csv
-*.log
+# Generated files and data
+data/
 __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+*.csv
+*.log
+*.pyc
+
+# MLflow files
+mlruns/
+
+# Logs
+logs/
