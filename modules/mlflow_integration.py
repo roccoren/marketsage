@@ -4,10 +4,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 import json
+from qlib.workflow import R
+from qlib.workflow.record_temp import SignalRecord
+from qlib.log import get_module_logger
+
+logger = get_module_logger("MLflowManager")
 
 class MLflowManager:
     """
-    Manages MLflow experiment tracking and workflow management.
+    Manages MLflow experiment tracking integrated with Qlib's workflow.
     """
     def __init__(self, experiment_name="qlib_workflow", tracking_uri=None):
         """
@@ -39,22 +44,48 @@ class MLflowManager:
             self.experiment_id = mlflow.create_experiment(self.experiment_name)
         else:
             self.experiment_id = experiment.experiment_id
-    
     def start_run(self, run_name=None):
         """
-        Start a new MLflow run.
+        Start a new MLflow run integrated with Qlib's workflow.
         
         Args:
             run_name (str, optional): Name for the run. If None, uses timestamp.
         """
-        if run_name is None:
-            run_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            # End any active runs
+            active_run = mlflow.active_run()
+            if active_run:
+                mlflow.end_run()
+                logger.info(f"Ended previous MLflow run: {active_run.info.run_id}")
+
+            # End any active Qlib recorder
+            # End any active Qlib recorder
+            try:
+                if R.get_recorder() is not None:
+                    R.end()
+                    logger.info("Ended previous Qlib recorder")
+            except (ValueError, AttributeError):
+                pass
+
+            if run_name is None:
+                run_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+            # Start new Qlib experiment
+            R.start(experiment_name=self.experiment_name)
+            logger.info(f"Started Qlib experiment: {self.experiment_name}")
+
+            # Start MLflow run
+            mlflow.start_run(experiment_id=self.experiment_id, run_name=run_name)
             
-        mlflow.start_run(experiment_id=self.experiment_id, run_name=run_name)
-        print(f"[DEBUG] Started MLflow run in experiment {self.experiment_name}")
-        print(f"[DEBUG] Run ID: {mlflow.active_run().info.run_id}")
-        print(f"[DEBUG] Artifact URI: {mlflow.active_run().info.artifact_uri}")
-        return mlflow.active_run().info.run_id
+            logger.info(f"Started MLflow run in experiment {self.experiment_name}")
+            logger.info(f"Run ID: {mlflow.active_run().info.run_id}")
+            logger.info(f"Artifact URI: {mlflow.active_run().info.artifact_uri}")
+            
+            # We've started both Qlib experiment and MLflow run
+            return mlflow.active_run().info.run_id
+        except Exception as e:
+            logger.error(f"Error starting run: {str(e)}")
+            raise
     
     def end_run(self):
         """End the current MLflow run."""
@@ -135,7 +166,7 @@ class MLflowManager:
 
 def log_experiment(data, forecasts, backtest_results):
     """
-    Log experiment results to MLflow.
+    Log experiment results to MLflow with Qlib integration.
     
     Args:
         data (pd.DataFrame): Historical stock data
@@ -144,55 +175,71 @@ def log_experiment(data, forecasts, backtest_results):
     """
     mlflow_manager = MLflowManager()
     
-    # Start a new run
+    # Start a new run with Qlib integration
     run_name = f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    mlflow_manager.start_run(run_name)
     
-    try:
-        # Log parameters
-        params = {
-            "symbols": ",".join(data.columns.get_level_values(1).unique()) if isinstance(data, pd.DataFrame) else "unknown",
-            "forecast_horizon": len(forecasts) if isinstance(forecasts, list) else "unknown",
-            "timestamp": datetime.now().isoformat()
-        }
-        mlflow_manager.log_parameters(params)
+    with R.start(experiment_name="qlib_workflow"):
+        mlflow_manager.start_run(run_name)
         
-        # Log metrics from backtesting results
-        if isinstance(backtest_results, dict):
-            metrics = {}
-            for symbol, results in backtest_results.items():
-                for metric_name, metric_value in results.items():
-                    metrics[f"{symbol}_{metric_name}"] = metric_value
-            mlflow_manager.log_metrics(metrics)
-        
-        # Log data summary as artifact
-        if isinstance(data, pd.DataFrame) and not data.empty:
-            # Save data description
-            data_desc_path = "data_description.txt"
-            with open(data_desc_path, "w") as f:
-                f.write(str(data.describe()))
-            mlflow_manager.log_artifact(data_desc_path)
-            os.remove(data_desc_path)
+        try:
+            # Log parameters including Qlib-specific ones
+            params = {
+                "symbols": ",".join(data.columns.get_level_values(1).unique()) if isinstance(data, pd.DataFrame) else "unknown",
+                "forecast_horizon": len(forecasts) if isinstance(forecasts, list) else "unknown",
+                "timestamp": datetime.now().isoformat(),
+                "qlib_region": R.get_context()["qlib_config"].get("region", "us"),
+                "qlib_model_type": R.get_context().get("model_type", "unknown")
+            }
+            mlflow_manager.log_parameters(params)
             
-            # Create and log a price chart
-            if 'Close' in data.columns:
-                plt.figure(figsize=(10, 6))
-                data['Close'].plot()
-                plt.title('Stock Close Prices')
-                plt.xlabel('Date')
-                plt.ylabel('Price')
-                plt.tight_layout()
-                mlflow_manager.log_figure(plt.gcf(), "charts")
-                plt.close()
-        
-        # Log forecasts as artifact
-        forecast_path = "forecasts.json"
-        with open(forecast_path, "w") as f:
-            json.dump(forecasts, f, default=str)
-        mlflow_manager.log_artifact(forecast_path)
-        os.remove(forecast_path)
-        
-        print(f"Successfully logged experiment to MLflow. Run ID: {mlflow.active_run().info.run_id}")
-    finally:
-        # End the run
-        mlflow_manager.end_run()
+            # Log metrics with Qlib analysis
+            if isinstance(backtest_results, dict):
+                for symbol, results in backtest_results.items():
+                    # Get Qlib's risk analysis metrics
+                    risk_metrics = R.get_recorder().list_metrics()
+                    
+                    # Combine with backtest results
+                    combined_metrics = {**results, **risk_metrics}
+                    metrics = {f"{symbol}_{k}": v for k, v in combined_metrics.items()}
+                    mlflow_manager.log_metrics(metrics)
+            
+            # Log predictions using Qlib's SignalRecord
+            if forecasts:
+                recorder = R.get_recorder()
+                SignalRecord(recorder=recorder).log_pred(pd.DataFrame(forecasts))
+            
+            # Log artifacts with additional Qlib context
+            if isinstance(data, pd.DataFrame) and not data.empty:
+                # Save data description with Qlib features
+                data_desc_path = "data_description.txt"
+                with open(data_desc_path, "w") as f:
+                    f.write("Qlib Feature Analysis:\n")
+                    f.write(str(R.get_recorder().list_features()))
+                    f.write("\n\nData Statistics:\n")
+                    f.write(str(data.describe()))
+                mlflow_manager.log_artifact(data_desc_path)
+                os.remove(data_desc_path)
+                
+                # Create and log visualizations
+                if 'Close' in data.columns:
+                    plt.figure(figsize=(10, 6))
+                    data['Close'].plot()
+                    plt.title('Stock Close Prices with Qlib Predictions')
+                    plt.xlabel('Date')
+                    plt.ylabel('Price')
+                    plt.tight_layout()
+                    mlflow_manager.log_figure(plt.gcf(), "charts")
+                    plt.close()
+            
+            # Log experiment config
+            config_path = "qlib_config.json"
+            with open(config_path, "w") as f:
+                json.dump(R.get_context(), f, default=str)
+            mlflow_manager.log_artifact(config_path)
+            os.remove(config_path)
+            
+            logger.info(f"Successfully logged experiment to MLflow with Qlib integration. Run ID: {mlflow.active_run().info.run_id}")
+        finally:
+            # End both MLflow run and Qlib recorder
+            mlflow_manager.end_run()
+            R.end()

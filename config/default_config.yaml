@@ -1,5 +1,17 @@
 # Default configuration for Qlib-based quantitative analysis project
 
+# Qlib configuration
+qlib:
+  provider_uri: "data/qlib_data"  # Local data directory
+  region: "us"  # Market region (us, cn, etc.)
+  logging_level: INFO
+  feature_cache:
+    enabled: true
+    path: "data/feature_cache"
+  expression_cache:
+    enabled: true
+    path: "data/expression_cache"
+
 # Storage configuration
 storage:
   # Default storage backend (csv, sqlite, tsdb)
@@ -35,65 +47,87 @@ forecasting:
   # Default forecast horizon (days)
   horizon: 10
   
-  # Default model type
-  model_type: ensemble
-  
-  # Model optimization
-  optimize_parameters: true
+  # Qlib model configuration
+  models:
+    lgb:
+      num_boost_round: 100
+      learning_rate: 0.1
+      max_depth: 5
+      feature_fraction: 0.8
+      subsample: 0.8
+      
+    lstm:
+      num_layers: 2
+      hidden_size: 64
+      dropout: 0.1
+      batch_size: 32
+      epochs: 100
   
   # Feature engineering
-  window_sizes: [5, 10, 20, 50]
+  features:
+    # Basic price features
+    price: ['$close', '$open', '$high', '$low', '$volume']
+    # Technical indicators
+    technical: [
+      'RSI($close, 14)',
+      'MACD($close)',
+      'MA($close, 5)',
+      'MA($close, 20)',
+      'STD($close, 20)',
+      'BBand($close, 20, 2)'
+    ]
+    # Advanced features
+    advanced: [
+      'ROC($close, 5)',
+      'BETA($close, $benchmark, 20)',
+      'MOMENTUM($close, 20)',
+      'VOLCORR($close, $volume, 20)'
+    ]
   
   # Action thresholds
   thresholds:
-    strong_buy: 1.0   # Percentage change threshold for strong buy signal
-    buy: 0.5         # Percentage change threshold for buy signal
-    sell: -0.5       # Percentage change threshold for sell signal
-    strong_sell: -1.0 # Percentage change threshold for strong sell signal
-  
-  # Volatility analysis
-  volatility:
-    high_threshold: 2.0  # Standard deviations for high volatility
-    window: 20          # Window for volatility calculation
-  
-  # Ensemble weights
-  ensemble_weights:
-    linear: 0.3
-    random_forest: 0.7
+    strong_buy: 1.0
+    buy: 0.5
+    sell: -0.5
+    strong_sell: -1.0
 
 # Backtesting configuration
 backtesting:
-  # Default strategy
-  strategy: momentum
+  # Qlib backtest configuration
+  executor:
+    type: "SimulatorExecutor"
+    configs:
+      trade_unit: 100
+      limit_threshold: 0.095
+      deal_price: "close"
+      commission: 0.001
+      tax: 0.001
+      slippage: 0.001
   
-  # Initial capital for backtests
-  initial_capital: 10000.0
-  
-  # Parameter optimization
-  optimize_parameters: true
-  test_period: 0.3       # Fraction of data to use for testing
-  optimization_metric: sharpe_ratio  # Metric to optimize (sharpe_ratio, total_return, etc.)
-  
-  # Strategy parameters
-  strategies:
-    momentum:
-      thresholds: [0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03]
-    
-    mean_reversion:
-      windows: [5, 10, 15, 20, 25, 30]
-      std_devs: [1.0, 1.5, 2.0, 2.5, 3.0]
-    
-    forecast_based:
-      thresholds: [0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03]
+  # Strategy settings
+  strategy:
+    type: "TopkDropoutStrategy"
+    configs:
+      model: null  # Will be set dynamically
+      dataset: null  # Will be set dynamically
+      topk: 50
+      n_drop: 5
+      signal: "prediction"
   
   # Performance evaluation
   evaluation:
-    min_trades: 10        # Minimum number of trades for valid backtest
-    required_metrics:     # Required performance metrics
-      - sharpe_ratio
-      - max_drawdown
-      - win_rate
-      - total_return
+    metrics: [
+      "excess_return_with_cost",
+      "excess_return_without_cost",
+      "max_drawdown",
+      "information_ratio",
+      "alpha",
+      "beta",
+      "sharpe",
+      "annual_return"
+    ]
+    min_trades: 10
+    risk_free_rate: 0.02
 
 # MLflow configuration
 mlflow:

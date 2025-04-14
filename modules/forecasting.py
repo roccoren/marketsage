@@ -2,7 +2,7 @@
 """
 Forecasting module for the Qlib-based quantitative analysis project.
 This module provides classes and functions for forecasting stock prices
-using various models and ensemble techniques.
+using Qlib's model framework and ensemble techniques.
 """
 
 import os
@@ -11,11 +11,13 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Optional, Union, Tuple, Callable
 from abc import ABC, abstractmethod
-from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import mean_squared_error
+# Import standard ML libraries instead of qlib
+import lightgbm as lgb
+from sklearn.ensemble import GradientBoostingRegressor
+# LSTM model import temporarily commented out
+# from qlib.contrib.model.pytorch.lstm import LSTMModel
 
 from modules.storage import StorageManager
 
@@ -44,76 +46,86 @@ class ForecastModel(ABC):
         pass
 
 
-class LinearRegressionModel(ForecastModel):
-    """Linear regression forecasting model."""
+class LGBModel(ForecastModel):
+    """LightGBM model using scikit-learn API."""
     
     def __init__(self, **kwargs):
-        self.model = LinearRegression(**kwargs)
-        self.scaler = StandardScaler()
+        self.params = {
+            'objective': 'regression',
+            'metric': 'rmse',
+            'boosting_type': 'gbdt',
+            'num_leaves': 31,
+            'learning_rate': 0.05,
+            'feature_fraction': 0.9,
+            'n_estimators': 100
+        }
+        self.params.update(kwargs)
+        self.model = lgb.LGBMRegressor(**self.params)
         self.is_trained = False
-    
+        
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
-        X_scaled = self.scaler.fit_transform(X)
-        self.model.fit(X_scaled, y)
+        self.model.fit(X, y)
         self.is_trained = True
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         if not self.is_trained:
             raise ValueError("Model must be trained before making predictions")
-        X_scaled = self.scaler.transform(X)
-        return self.model.predict(X_scaled)
+        return self.model.predict(X)
     
     def get_params(self) -> Dict[str, Any]:
-        return {
-            'coef': self.model.coef_.tolist() if self.is_trained else None,
-            'intercept': float(self.model.intercept_) if self.is_trained else None
-        }
+        return self.model.get_params()
     
     def set_params(self, params: Dict[str, Any]) -> None:
-        if 'coef' in params and 'intercept' in params:
-            self.model.coef_ = np.array(params['coef'])
-            self.model.intercept_ = params['intercept']
-            self.is_trained = True
+        self.model.set_params(**params)
 
 
-class RandomForestModel(ForecastModel):
-    """Random forest forecasting model."""
-    
-    def __init__(self, n_estimators: int = 100, max_depth: Optional[int] = None, **kwargs):
-        self.model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, **kwargs)
-        self.scaler = StandardScaler()
-        self.is_trained = False
-    
-    def train(self, X: pd.DataFrame, y: pd.Series) -> None:
-        X_scaled = self.scaler.fit_transform(X)
-        self.model.fit(X_scaled, y)
-        self.is_trained = True
-    
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        if not self.is_trained:
-            raise ValueError("Model must be trained before making predictions")
-        X_scaled = self.scaler.transform(X)
-        return self.model.predict(X_scaled)
-    
-    def get_params(self) -> Dict[str, Any]:
-        return {
-            'n_estimators': self.model.n_estimators,
-            'max_depth': self.model.max_depth,
-            'feature_importances': self.model.feature_importances_.tolist() if self.is_trained else None
-        }
-    
-    def set_params(self, params: Dict[str, Any]) -> None:
-        if 'n_estimators' in params:
-            self.model.n_estimators = params['n_estimators']
-        if 'max_depth' in params:
-            self.model.max_depth = params['max_depth']
+# LSTM model class temporarily commented out
+# class QlibLSTMModel(ForecastModel):
+#     """LSTM model using Qlib's implementation."""
+#
+#     def __init__(self, **kwargs):
+#         self.model = LSTMModel(**kwargs)
+#         self.is_trained = False
+#
+#     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
+#         # Start recording with Qlib's workflow
+#         with R.start(experiment_name="train_lstm"):
+#             self.model.fit(X, y)
+#             self.is_trained = True
+#
+#             # Log prediction scores
+#             pred = self.model.predict(X)
+#             SignalRecord(model=self.model).log_pred(pred)
+#
+#     def predict(self, X: pd.DataFrame) -> np.ndarray:
+#         if not self.is_trained:
+#             raise ValueError("Model must be trained before making predictions")
+#         return self.model.predict(X)
+#
+#     def get_params(self) -> Dict[str, Any]:
+#         return self.model.get_params()
+#
+#     def set_params(self, params: Dict[str, Any]) -> None:
+#         self.model.set_params(**params)
 
 
 class EnsembleModel(ForecastModel):
     """Ensemble forecasting model that combines multiple models."""
     
-    def __init__(self, models: List[ForecastModel], weights: Optional[List[float]] = None):
+    def __init__(self, models: List[ForecastModel], weights: Optional[List[float]] = None,
+                 dynamic_weighting: bool = True, error_metric: str = 'rmse'):
+        """
+        Initialize EnsembleModel.
+        
+        Args:
+            models (List[ForecastModel]): List of models to ensemble
+            weights (Optional[List[float]]): Initial weights for models
+            dynamic_weighting (bool): Whether to use dynamic weighting based on performance
+            error_metric (str): Metric for evaluating model performance ('rmse', 'mae', 'mape')
+        """
         self.models = models
+        self.dynamic_weighting = dynamic_weighting
+        self.error_metric = error_metric
         
         if weights is None:
             # Equal weights by default
@@ -126,22 +138,79 @@ class EnsembleModel(ForecastModel):
             self.weights = [w / total for w in weights]
         
         self.is_trained = False
+        self.model_errors = None  # Store historical prediction errors
     
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
+        """Train the model on historical data using cross-validation."""
+        # Use TimeSeriesSplit for time series cross-validation
+        tscv = TimeSeriesSplit(n_splits=5)
+        model_errors = [[] for _ in range(len(self.models))]
+        
+        # Train and evaluate each model using cross-validation
+        for train_idx, val_idx in tscv.split(X):
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+            
+            # Train each model and calculate validation error
+            for i, model in enumerate(self.models):
+                model.train(X_train, y_train)
+                val_pred = model.predict(X_val)
+                error = self._calculate_error(y_val, val_pred)
+                model_errors[i].append(error)
+        
+        # Calculate average error for each model
+        self.model_errors = [np.mean(errors) for errors in model_errors]
+        
+        # Update weights based on model performance
+        if self.dynamic_weighting:
+            self._update_weights()
+        
+        # Finally, train all models on the full dataset
         for model in self.models:
             model.train(X, y)
+            
         self.is_trained = True
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Generate weighted predictions from all models."""
         if not self.is_trained:
             raise ValueError("Models must be trained before making predictions")
         
-        predictions = []
+        predictions = np.zeros((len(self.models), len(X)))
         for i, model in enumerate(self.models):
-            pred = model.predict(X)
-            predictions.append(pred * self.weights[i])
+            predictions[i] = model.predict(X) * self.weights[i]
         
-        return np.sum(predictions, axis=0)
+        # Calculate weighted ensemble prediction
+        ensemble_pred = np.sum(predictions, axis=0)
+        
+        return ensemble_pred
+    
+    def _calculate_error(self, y_true: pd.Series, y_pred: np.ndarray) -> float:
+        """Calculate error metric for model evaluation."""
+        if self.error_metric == 'rmse':
+            return np.sqrt(mean_squared_error(y_true, y_pred))
+        elif self.error_metric == 'mae':
+            return np.abs(y_true - y_pred).mean()
+        elif self.error_metric == 'mape':
+            return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+        else:
+            return np.sqrt(mean_squared_error(y_true, y_pred))
+    
+    def _update_weights(self) -> None:
+        """Update model weights based on their performance."""
+        if self.model_errors is None or len(self.model_errors) == 0:
+            return
+        
+        # Convert errors to weights (lower error = higher weight)
+        max_error = max(self.model_errors)
+        weights = [max_error - error for error in self.model_errors]
+        
+        # Add small constant to avoid zero weights
+        weights = [w + 1e-6 for w in weights]
+        
+        # Normalize weights to sum to 1
+        total = sum(weights)
+        self.weights = [w / total for w in weights]
     
     def get_params(self) -> Dict[str, Any]:
         model_params = []
@@ -168,30 +237,112 @@ class EnsembleModel(ForecastModel):
 class FeatureEngineering:
     """Feature engineering for time series forecasting."""
     
-    @staticmethod
-    def create_features(data: pd.DataFrame, window_sizes: List[int] = [5, 10, 20]) -> pd.DataFrame:
+    def create_features(self, data: pd.DataFrame, window_sizes: List[int] = [5, 10, 20, 30]) -> pd.DataFrame:
+        """Create technical features for time series forecasting."""
         df = data.copy()
         
         # Basic price features
         df['returns'] = df['Close'].pct_change()
+        df['log_returns'] = np.log(df['Close'] / df['Close'].shift(1))
         
-        # Rolling statistics
+        # Rolling statistics for multiple windows
         for window in window_sizes:
-            # Price rolling statistics
+            # Price statistics
             df[f'close_ma_{window}'] = df['Close'].rolling(window=window).mean()
             df[f'close_std_{window}'] = df['Close'].rolling(window=window).std()
+            df[f'close_min_{window}'] = df['Close'].rolling(window=window).min()
+            df[f'close_max_{window}'] = df['Close'].rolling(window=window).max()
             
-            # Volume rolling statistics
+            # Return statistics
+            df[f'returns_std_{window}'] = df['returns'].rolling(window=window).std()
+            df[f'returns_skew_{window}'] = df['returns'].rolling(window=window).skew()
+            
+            # Volume statistics
             df[f'volume_ma_{window}'] = df['Volume'].rolling(window=window).mean()
+            df[f'volume_std_{window}'] = df['Volume'].rolling(window=window).std()
+            
+            # Price momentum and volatility
+            df[f'momentum_{window}d'] = df['Close'] / df['Close'].shift(window) - 1
+            df[f'volatility_{window}d'] = df['log_returns'].rolling(window=window).std() * np.sqrt(252)
         
-        # Price momentum
-        df['momentum_1d'] = df['Close'] / df['Close'].shift(1) - 1
-        df['momentum_5d'] = df['Close'] / df['Close'].shift(5) - 1
+        # Technical indicators
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['rsi'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['macd'] = exp1 - exp2
+        df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+        
+        # Bollinger Bands - Simplified calculation to avoid DataFrame issues
+        # Make sure all values are Series, not DataFrame
+        close_series = df['Close'] if isinstance(df['Close'], pd.Series) else df['Close'].iloc[:, 0]
+        mid = close_series.rolling(window=20).mean()
+        std = close_series.rolling(window=20).std()
+        
+        # Store as Series
+        df['bb_upper'] = mid + 2 * std
+        df['bb_lower'] = mid - 2 * std
+        # Calculate width directly using Series
+        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / mid
+        
+        # Volume-price relationship
+        df['volume_price_corr'] = df['Close'].rolling(window=20).corr(df['Volume'])
+        df['volume_returns_corr'] = df['returns'].rolling(window=20).corr(df['Volume'])
+        
+        # Trend strength
+        df['adx'] = FeatureEngineering._calculate_adx(df)
         
         # Drop rows with NaN values
         df = df.dropna()
         
         return df
+    
+    @staticmethod
+    def _calculate_adx(data: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Average Directional Index (ADX)."""
+        df = data.copy()
+        
+        # Calculate True Range (TR)
+        df['TR'] = np.maximum(
+            df['High'] - df['Low'],
+            np.maximum(
+                abs(df['High'] - df['Close'].shift(1)),
+                abs(df['Low'] - df['Close'].shift(1))
+            )
+        )
+        
+        # Calculate Directional Movement
+        df['DMplus'] = np.where(
+            (df['High'] - df['High'].shift(1)) > (df['Low'].shift(1) - df['Low']),
+            np.maximum(df['High'] - df['High'].shift(1), 0),
+            0
+        )
+        df['DMminus'] = np.where(
+            (df['Low'].shift(1) - df['Low']) > (df['High'] - df['High'].shift(1)),
+            np.maximum(df['Low'].shift(1) - df['Low'], 0),
+            0
+        )
+        
+        # Calculate smoothed averages
+        df['TR_avg'] = df['TR'].rolling(window=period).mean()
+        df['DMplus_avg'] = df['DMplus'].rolling(window=period).mean()
+        df['DMminus_avg'] = df['DMminus'].rolling(window=period).mean()
+        
+        # Calculate DI+ and DI-
+        df['DIplus'] = 100 * df['DMplus_avg'] / df['TR_avg']
+        df['DIminus'] = 100 * df['DMminus_avg'] / df['TR_avg']
+        
+        # Calculate ADX
+        df['DX'] = 100 * abs(df['DIplus'] - df['DIminus']) / (df['DIplus'] + df['DIminus'])
+        adx = df['DX'].rolling(window=period).mean()
+        
+        return adx
 
 
 class ForecastingManager:
@@ -207,8 +358,9 @@ class ForecastingManager:
         
         # Available models
         self.model_factories = {
-            'linear': lambda **kwargs: LinearRegressionModel(**kwargs),
-            'random_forest': lambda **kwargs: RandomForestModel(**kwargs)
+            'lgb': lambda **kwargs: LGBModel(**kwargs),
+            # LSTM model temporarily disabled
+            # 'lstm': lambda **kwargs: QlibLSTMModel(**kwargs)
         }
     
     def prepare_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
@@ -224,6 +376,22 @@ class ForecastingManager:
         # Separate features and target
         X = features_df.drop(['target', 'Open', 'High', 'Low', 'Close', 'Volume', 'returns'], axis=1)
         y = features_df['target']
+        # Clean feature names for LightGBM - replace special characters
+        X = X.copy()
+        clean_columns = []
+        for col in X.columns:
+            if isinstance(col, str):
+                clean_col = col.replace('[', '_').replace(']', '_').replace('<', '_lt_').replace('>', '_gt_') \
+                              .replace('(', '_').replace(')', '_').replace(':', '_').replace(' ', '_') \
+                              .replace(',', '_').replace('/', '_div_').replace('\\', '_')
+            else:
+                # If column is not a string (e.g., tuple), convert to string
+                clean_col = str(col).replace('[', '_').replace(']', '_').replace('<', '_lt_').replace('>', '_gt_') \
+                              .replace('(', '_').replace(')', '_').replace(':', '_').replace(' ', '_') \
+                              .replace(',', '_').replace('/', '_div_').replace('\\', '_')
+            clean_columns.append(clean_col)
+        
+        X.columns = clean_columns
         
         return X, y
     
@@ -295,8 +463,8 @@ class ForecastingManager:
             model = self.train_model(symbol, data, model_type, save=True)
         # Ensure the model is trained even if loaded from stored parameters
         if not model.is_trained:
-            X_train, y_train = self.prepare_data(data)
-            model.train(X_train, y_train)
+            X, y = self.prepare_data(data)
+            model.train(X, y)
         
         # Prepare data for forecasting
         X, _ = self.prepare_data(data)
@@ -314,21 +482,29 @@ class ForecastingManager:
             # we would need to update all features based on the predicted value
         
         # Calculate forecast metrics
-        last_price = data['Close'].iloc[-1]
+        # Ensure last_price is a scalar value
+        last_price = data['Close'].iloc[-1].item() if isinstance(data['Close'].iloc[-1], pd.Series) else data['Close'].iloc[-1]
         forecast_change = (forecasts[-1] / last_price - 1) * 100
         
         # Calculate daily forecast changes
         daily_changes = []
         prev_price = last_price
         for price in forecasts:
+            # Ensure price is a scalar value
+            if isinstance(price, (pd.Series, np.ndarray)):
+                price = price.item() if hasattr(price, 'item') else price[0]
             daily_change = (price / prev_price - 1) * 100
-            daily_changes.append(daily_change)
+            daily_changes.append(float(daily_change))  # Convert to float to ensure scalar value
             prev_price = price
         
         # Determine recommended actions based on forecast
         # For simplicity: >1% daily gain = Strong Buy, >0.5% = Buy, <-1% = Strong Sell, <-0.5% = Sell, else = Hold
         actions = []
         for change in daily_changes:
+            # Ensure change is a scalar value, not a Series
+            if isinstance(change, pd.Series):
+                change = change.iloc[0]  # Get the first value if it's a Series
+                
             if change > 1.0:
                 actions.append("Strong Buy")
             elif change > 0.5:
