@@ -24,6 +24,7 @@ from modules.market_analyzer import MarketAnalyzer
 from modules.storage import StorageManager
 from modules.backtesting import TestBacktestManager
 from modules.mlflow_integration import MLflowManager
+from modules.forecasting import ForecastingManager
 
 # Configure logging
 logging.basicConfig(
@@ -226,6 +227,14 @@ def parse_args():
         action='store_true',
         help='Disable MLflow tracking'
     )
+
+    parser.add_argument(
+        '--prediction-model',
+        type=str,
+        choices=['original', 'ensemble'],
+        default='ensemble',
+        help='Choose prediction model: original (technical indicators) or ensemble (integrated ML model)'
+    )
     
     return parser.parse_args()
 
@@ -333,6 +342,8 @@ def main():
         sys.exit(1)
     
     os.makedirs(args.output_dir, exist_ok=True)
+    # Initialize StockParameterManager for parameter optimization
+    param_manager = StockParameterManager()
     
     symbols = load_stock_symbols(args.symbols_file)
     if not symbols:
@@ -358,18 +369,41 @@ def main():
     # Process each stock
     optimization_results = []
     signal_predictions = []
-    
     for symbol, data in stock_data.items():
         try:
+            # --- Prediction Model Selection ---
+            if args.prediction_model == 'ensemble':
+                try:
+                    forecasting_manager = ForecastingManager(forecast_horizon=10)
+                    ensemble_result = forecasting_manager.generate_forecast(symbol, data, model_type='ensemble', use_stored_model=True)
+                    logger.info(f"[EnsembleModel] {symbol}: {ensemble_result['overall_action']} | Next 10 days: {ensemble_result['daily_actions']}")
+                except Exception as e:
+                    logger.error(f"[EnsembleModel] Error for {symbol}: {e}")
+            else:
+                # Use original technical indicator-based prediction
+                predictions = analyze_predictions(data)
+                logger.info(f"[OriginalModel] {symbol}: {predictions['signal']} | Predicted Price: {predictions['predicted_price']:.2f}")
+
             base_returns = calculate_returns(data)
             opt_result = run_optimization_for_stock(symbol, data)
-            
+
+            # --- Parameter Optimization and Saving Best Strategy ---
             if opt_result:
+                market_conditions = {
+                    'volatility': opt_result.get('volatility', 0),
+                    'trend': opt_result.get('trend_strength', 0)
+                }
+                performance_metrics = opt_result.get('metrics', {})
+
+                updated_params = param_manager.update_parameters(symbol, performance_metrics, market_conditions)
+                best_params = param_manager.get_best_parameters(symbol)
+                logger.info(f"Best parameters for {symbol}: {best_params}")
+
                 # Record optimization results
                 base_sharpe = max(base_returns.get('sharpe_ratio', 0.0001), 0.0001)
                 opt_sharpe = max(opt_result['metrics']['sharpe_ratio'], base_sharpe)
                 improvement = ((opt_sharpe / base_sharpe) - 1) * 100
-                
+
                 optimization_results.append({
                     'Symbol': symbol,
                     'Base Return': base_returns.get('total_return', 0),
@@ -380,7 +414,7 @@ def main():
                     'Win Rate': opt_result['metrics'].get('win_rate', 0),
                     'Max Drawdown': opt_result['metrics'].get('max_drawdown', 0)
                 })
-                
+
                 # Record signal predictions
                 signal_predictions.append({
                     'Symbol': symbol,
@@ -392,7 +426,7 @@ def main():
                     'RSI': opt_result['rsi'],
                     'Trend Strength': opt_result['trend_strength']
                 })
-                
+
                 # Log results
                 logger.info(f"\n=== Results for {symbol} ===")
                 logger.info(f"Base Returns: {base_returns.get('total_return', 0):.2%}")
@@ -403,7 +437,7 @@ def main():
                 logger.info(f"Signal: {opt_result['signal']} (Confidence: {opt_result['confidence']:.2f})")
                 logger.info(f"Price: ${opt_result['last_close']:.2f} → ${opt_result['predicted_price']:.2f}")
                 logger.info(f"Expected Return: {opt_result['expected_return']:.2f}%")
-                
+
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}")
     
