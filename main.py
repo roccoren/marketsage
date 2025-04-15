@@ -32,6 +32,45 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+def fetch_incremental_stock_data(storage_manager, symbol, start_date, end_date):
+    """Fetch only missing historical data for a symbol and save merged result."""
+    # Load existing data
+    existing = storage_manager.load_data(symbol)
+    if not existing.empty:
+        # Ensure all dates are tz-naive for comparison
+        idx = existing.index
+        if hasattr(idx, 'tz_convert') and idx.tz is not None:
+            idx = idx.tz_convert(None)
+        idx = pd.to_datetime(idx).normalize()
+        min_saved = idx.min()
+        max_saved = idx.max()
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+        fetch_ranges = []
+        if start_dt < min_saved:
+            fetch_ranges.append((start_date, (min_saved - pd.Timedelta(days=1)).strftime('%Y-%m-%d')))
+        if end_dt > max_saved:
+            fetch_ranges.append(((max_saved + pd.Timedelta(days=1)).strftime('%Y-%m-%d'), end_date))
+        new_data = []
+        for rng in fetch_ranges:
+            df = fetch_stock_data(symbol, rng[0], rng[1])
+            if df is not None and not df.empty:
+                new_data.append(df)
+        if new_data:
+            all_data = pd.concat([existing] + new_data)
+            all_data.index = pd.to_datetime(all_data.index).normalize()
+            all_data = all_data[~all_data.index.duplicated(keep='last')].sort_index()
+            storage_manager.save_data(symbol, all_data)
+            return all_data
+        else:
+            return existing
+    else:
+        # No data saved, fetch all
+        df = fetch_stock_data(symbol, start_date, end_date)
+        if df is not None and not df.empty:
+            storage_manager.save_data(symbol, df)
+        return df
+
 
 def predict_future_price(data: pd.DataFrame, days: int = 5) -> Dict:
     """Predict future price and trend strength based on recent trends."""
@@ -257,6 +296,10 @@ def fetch_stock_data(symbol: str, start_date: str, end_date: str) -> pd.DataFram
         if len(data) == 0:
             logger.error(f"No data found for {symbol}")
             return None
+        # Ensure index is tz-naive
+        if hasattr(data.index, "tz_convert") and data.index.tz is not None:
+            data.index = data.index.tz_convert(None)
+        data.index = pd.to_datetime(data.index).normalize()
         logger.info(f"Fetched {len(data)} data points for {symbol}")
         return data
     except Exception as e:
@@ -352,8 +395,9 @@ def main():
     # Fetch stock data
     stock_data = {}
     with ThreadPoolExecutor(max_workers=5) as executor:
+        storage_manager = StorageManager()
         futures = {
-            executor.submit(fetch_stock_data, symbol, args.data_start_date, args.data_end_date): symbol 
+            executor.submit(fetch_incremental_stock_data, storage_manager, symbol, args.data_start_date, args.data_end_date): symbol
             for symbol in symbols
         }
         
