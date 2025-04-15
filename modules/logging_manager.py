@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Logging manager module for the Qlib-based quantitative analysis project.
+Logging manager module for the MarketSage quantitative analysis project.
 This module provides structured logging with Loguru, including remote logging
 integration and automated error notifications.
 """
@@ -49,7 +49,7 @@ class LoggingManager:
         
         # Get configuration
         log_level = get_config(f"{self.config_prefix}.level", "INFO")
-        log_file = get_config(f"{self.config_prefix}.file", "logs/qlib_workflow.log")
+        log_file = get_config(f"{self.config_prefix}.file", "logs/marketsage.log")
         max_size = get_config(f"{self.config_prefix}.max_size", 10 * 1024 * 1024)  # 10 MB
         backup_count = get_config(f"{self.config_prefix}.backup_count", 5)
         console_enabled = get_config(f"{self.config_prefix}.console", True)
@@ -142,7 +142,7 @@ class LoggingManager:
         smtp_port = get_config("error_handling.email_notifications.smtp_port", 587)
         sender = get_config("error_handling.email_notifications.sender", "")
         recipients = get_config("error_handling.email_notifications.recipients", [])
-        subject_prefix = get_config("error_handling.email_notifications.subject_prefix", "[QLIB ERROR]")
+        subject_prefix = get_config("error_handling.email_notifications.subject_prefix", "[MARKETSAGE ERROR]")
         
         if not smtp_server or not sender or not recipients:
             logger.warning("Email notification configuration incomplete")
@@ -157,7 +157,7 @@ class LoggingManager:
             
             # Create message body
             body = f"""
-            An error occurred in the Qlib workflow:
+            An error occurred in the MarketSage system:
             
             Type: {error_data['type']}
             Message: {error_data['message']}

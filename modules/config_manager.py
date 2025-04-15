@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration management module for the Qlib-based quantitative analysis project.
+Configuration management module for the MarketSage quantitative analysis project.
 This module provides a centralized configuration system that combines configuration
 files (YAML/JSON) with environment variables.
 """
@@ -17,7 +17,7 @@ class ConfigManager:
     Configuration manager that combines configuration files with environment variables.
     """
     
-    def __init__(self, config_file: Optional[str] = None, env_prefix: str = "QLIB_"):
+    def __init__(self, config_file: Optional[str] = None, env_prefix: str = "MARKETSAGE_"):
         """
         Initialize configuration manager.
         
@@ -66,7 +66,7 @@ class ConfigManager:
         """
         Load configuration from environment variables.
         Environment variables with the specified prefix are converted to nested dictionary keys.
-        For example, QLIB_STORAGE_BACKEND=csv becomes {'storage': {'backend': 'csv'}}
+        For example, MARKETSAGE_STORAGE_BACKEND=csv becomes {'storage': {'backend': 'csv'}}
         """
         for key, value in os.environ.items():
             if key.startswith(self.env_prefix):
@@ -182,7 +182,7 @@ class ConfigManager:
 _default_config_manager = None
 
 
-def get_config_manager(config_file: Optional[str] = None, env_prefix: str = "QLIB_") -> ConfigManager:
+def get_config_manager(config_file: Optional[str] = None, env_prefix: str = "MARKETSAGE_") -> ConfigManager:
     """
     Get the default configuration manager.
     

@@ -1,4 +1,4 @@
-# Qlib Workflow
+# MarketSage
 
 A comprehensive quantitative analysis workflow based on Microsoft Qlib, providing advanced features for stock data acquisition, forecasting, backtesting, and visualization.
 
@@ -42,8 +42,8 @@ A comprehensive quantitative analysis workflow based on Microsoft Qlib, providin
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/qlib-workflow.git
-cd qlib-workflow
+git clone https://github.com/yourusername/marketsage.git
+cd marketsage
 ```
 
 2. Install dependencies:
@@ -106,13 +106,13 @@ python main.py --config my_config.yaml
 You can also override configuration with environment variables:
 
 ```bash
-QLIB_STORAGE_BACKEND=sqlite python main.py
+MARKETSAGE_STORAGE_BACKEND=sqlite python main.py
 ```
 
 ## Project Structure
 
 ```
-qlib-workflow/
+marketsage/
 ├── config/                  # Configuration files
 ├── data/                    # Data storage directory
 ├── docker/                  # Docker configuration

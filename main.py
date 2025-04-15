@@ -217,7 +217,7 @@ def parse_args():
     parser.add_argument(
         '--experiment-name',
         type=str,
-        default='stock_analysis',
+        default='marketsage',
         help='MLflow experiment name'
     )
     

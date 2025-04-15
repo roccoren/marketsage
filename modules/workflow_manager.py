@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Workflow Manager for Qlib-based quantitative analysis.
+Workflow Manager for MarketSage quantitative analysis.
 This module provides a workflow management system using MLflow for tracking
 and event-driven architecture for module communication.
 """
@@ -485,7 +485,7 @@ class WorkflowManager:
             storage_backend (str, optional): Storage backend to use
         """
         # Use configuration if parameters are not provided
-        self.experiment_name = experiment_name or get_config("mlflow.experiment_name", "qlib_workflow")
+        self.experiment_name = experiment_name or get_config("mlflow.experiment_name", "marketsage")
         self.tracking_uri = tracking_uri or get_config("mlflow.tracking_uri", None)
         self.artifact_dir = artifact_dir or get_config("mlflow.artifact_dir", "artifacts")
         self.storage_backend = storage_backend or get_config("storage.backend", "csv")
@@ -629,7 +629,7 @@ def create_workflow(
     backtesting_module,
     symbols,
     start_date,
-    experiment_name="qlib_workflow",
+    experiment_name="marketsage",
     tracking_uri=None
 ):
     """

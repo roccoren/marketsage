@@ -1,6 +1,6 @@
-# MLflow Integration Guide for Qlib Workflow
+# MLflow Integration Guide for MarketSage
 
-This guide explains how to use MLflow for experiment tracking, workflow management, and result visualization in your Qlib-based quantitative analysis project.
+This guide explains how to use MLflow for experiment tracking, workflow management, and result visualization in your MarketSage quantitative analysis project.
 
 ## Table of Contents
 
@@ -309,6 +309,6 @@ mlflow ui  # Open http://localhost:5000 in your browser
 
 ## Conclusion
 
-MLflow provides a comprehensive solution for experiment tracking, workflow management, and result visualization in your Qlib-based quantitative analysis project. By following this guide, you can effectively manage your experiments, compare results, and make data-driven decisions.
+MLflow provides a comprehensive solution for experiment tracking, workflow management, and result visualization in your MarketSage quantitative analysis project. By following this guide, you can effectively manage your experiments, compare results, and make data-driven decisions.
 
 For more advanced workflow management, consider integrating with tools like Dagster or Airflow as described in this guide.
