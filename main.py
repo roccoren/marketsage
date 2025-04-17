@@ -336,9 +336,9 @@ def parse_args():
     parser.add_argument(
         '--prediction-model',
         type=str,
-        choices=['original', 'ensemble'],
+        choices=['original', 'ensemble', 'lgb'],
         default='ensemble',
-        help='Choose prediction model: original (technical indicators) or ensemble (integrated ML model)'
+        help='Choose prediction model: original (technical indicators), ensemble (integrated ML model), or lgb (LightGBM model)'
     )
     
     return parser.parse_args()
@@ -421,7 +421,7 @@ def calculate_returns(data: pd.DataFrame) -> Dict:
         'volatility': daily_returns.std() * np.sqrt(252)
     }
 
-def run_optimization_for_stock(symbol: str, data: pd.DataFrame) -> Dict:
+def run_optimization_for_stock(symbol: str, data: pd.DataFrame, forecast_result: Dict = None, prediction_model: str = 'original') -> Dict:
     """Run optimization cycle for a single stock."""
     try:
         logger.info(f"\n=== Starting optimization for {symbol} ===")
@@ -431,8 +431,55 @@ def run_optimization_for_stock(symbol: str, data: pd.DataFrame) -> Dict:
         # Set the name attribute on the DataFrame for symbol identification
         data.name = symbol
         
-        # Generate predictions for full dataset
-        predictions = analyze_predictions(data)
+        # Generate predictions based on the model type
+        if prediction_model in ['ensemble', 'lgb'] and forecast_result is not None:
+            # Use forecasting model results
+            last_close = data['Close'].iloc[-1]
+            forecast_change = forecast_result['forecast_change_percent']
+            predicted_price = last_close * (1 + forecast_change / 100)
+            
+            # Determine signal based on forecast result
+            if 'Buy' in forecast_result['overall_action']:
+                signal = 'BUY'
+            elif 'Sell' in forecast_result['overall_action']:
+                signal = 'SELL'
+            else:
+                signal = 'HOLD'
+                
+            # Extract confidence from forecast volatility and trend with enhanced confidence for LGB model
+            volatility = forecast_result['volatility']
+            trend = abs(forecast_result['trend'])
+            
+            if prediction_model == 'lgb':
+                # Enhanced confidence calculation for LGB model
+                # Increase trend weight, reduce volatility penalty, and raise the base confidence
+                base_confidence = 0.5  # Higher base confidence
+                trend_weight = 0.8     # Increased trend weight
+                vol_weight = 0.2       # Decreased volatility weight
+                
+                # Calculate confidence with a higher floor
+                confidence = min(0.95, max(0.4, base_confidence + trend * trend_weight - volatility * vol_weight))
+                
+                # Further boost confidence based on signal type
+                if signal == 'BUY':
+                    confidence = min(0.95, confidence * 1.2)  # Boost buy signals by 20%
+            else:
+                # Original confidence calculation for ensemble model
+                confidence = min(0.95, max(0.1, (trend * 0.6 + (1 - volatility) * 0.4)))
+            
+            # Create predictions dict with forecast data
+            predictions = {
+                'signal': signal,
+                'confidence': confidence,
+                'expected_return': forecast_change,
+                'predicted_price': predicted_price,
+                'trend_strength': trend * 10,  # Scale to match original scale
+                'rsi': 50,  # Default value as forecasting doesn't provide RSI
+                'volatility': volatility
+            }
+        else:
+            # Use original technical indicator-based prediction
+            predictions = analyze_predictions(data)
         
         # Run backtest with optimal parameters
         result = backtest_manager.run_backtest(
@@ -499,20 +546,31 @@ def main():
     for symbol, data in stock_data.items():
         try:
             # --- Prediction Model Selection ---
+            forecast_result = None
+            
             if args.prediction_model == 'ensemble':
                 try:
                     forecasting_manager = ForecastingManager(forecast_horizon=10)
-                    ensemble_result = forecasting_manager.generate_forecast(symbol, data, model_type='ensemble', use_stored_model=True)
-                    logger.info(f"[EnsembleModel] {symbol}: {ensemble_result['overall_action']} | Next 10 days: {ensemble_result['daily_actions']}")
+                    forecast_result = forecasting_manager.generate_forecast(symbol, data, model_type='ensemble', use_stored_model=True)
+                    logger.info(f"[EnsembleModel] {symbol}: {forecast_result['overall_action']} | Next 10 days: {forecast_result['daily_actions']}")
                 except Exception as e:
                     logger.error(f"[EnsembleModel] Error for {symbol}: {e}")
+                    forecast_result = None
+            elif args.prediction_model == 'lgb':
+                try:
+                    forecasting_manager = ForecastingManager(forecast_horizon=10)
+                    forecast_result = forecasting_manager.generate_forecast(symbol, data, model_type='lgb', use_stored_model=True)
+                    logger.info(f"[LGBModel] {symbol}: {forecast_result['overall_action']} | Next 10 days: {forecast_result['daily_actions']}")
+                except Exception as e:
+                    logger.error(f"[LGBModel] Error for {symbol}: {e}")
+                    forecast_result = None
             else:
                 # Use original technical indicator-based prediction
                 predictions = analyze_predictions(data)
                 logger.info(f"[OriginalModel] {symbol}: {predictions['signal']} | Predicted Price: {predictions['predicted_price']:.2f}")
 
             base_returns = calculate_returns(data)
-            opt_result = run_optimization_for_stock(symbol, data)
+            opt_result = run_optimization_for_stock(symbol, data, forecast_result, args.prediction_model)
 
             # --- Parameter Optimization and Saving Best Strategy ---
             if opt_result:
