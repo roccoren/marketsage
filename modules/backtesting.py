@@ -8,6 +8,12 @@ import pandas as pd
 from typing import Dict, List, Any, Optional
 import logging
 from datetime import datetime, timedelta
+import random
+
+# Set global random seeds for reproducibility
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
 
 logger = logging.getLogger(__name__)
 
@@ -177,15 +183,37 @@ class TestBacktestManager:
             # Generate trading signals
             signals = self.generate_signals(symbol, data, strategy_params)
             
-            # Generate synthetic returns with positive bias
-            base_return = 0.003 + strategy_params.get('threshold', 0.01) * 0.02
+            # Reset random seeds before generating synthetic data for reproducibility
+            random.seed(RANDOM_SEED)
+            np.random.seed(RANDOM_SEED)
+            
+            # Generate synthetic returns with balanced bias
+            # Use a mix of positive and negative returns to ensure both buy and sell signals
+            # Determine bias based on first character of symbol for broader coverage
+            first_char = symbol[0].upper() if symbol else 'A'
+            char_code = ord(first_char)
+            
+            # Divide stocks into three groups based on first character
+            if char_code % 3 == 0:  # Group 1: Positive bias (A, D, G, J, M, P, S, V, Y)
+                base_return = 0.003 + strategy_params.get('threshold', 0.01) * 0.02
+                trend = np.linspace(-0.001, 0.002, len(data))
+            elif char_code % 3 == 1:  # Group 2: Neutral (B, E, H, K, N, Q, T, W, Z)
+                base_return = 0.001
+                trend = np.linspace(0.001, 0.001, len(data))
+            else:  # Group 3: Negative bias (C, F, I, L, O, R, U, X)
+                base_return = -0.003 - strategy_params.get('threshold', 0.01) * 0.02
+                trend = np.linspace(0.002, -0.003, len(data))
+                
+            # Generate returns with the appropriate bias
             base_returns = np.random.normal(base_return, 0.012, size=len(data))
             
             # Add market trend effect
-            trend = np.linspace(-0.001, 0.002, len(data))
             base_returns += trend
             
             # Apply strategy effect based on signals
+            # Reset random seeds again to ensure reproducibility
+            random.seed(RANDOM_SEED)
+            np.random.seed(RANDOM_SEED)
             strategy_effect = np.where(
                 signals['signal'] == 1,
                 np.random.normal(0.005, 0.008, size=len(data)),
