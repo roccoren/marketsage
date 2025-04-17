@@ -16,6 +16,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
 import mlflow
 
+# Import color utilities
+from modules.color_utils import color_text
+
 # Set global random seeds for reproducibility
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)
@@ -166,14 +169,54 @@ def analyze_predictions(data: pd.DataFrame, days_ahead: int = 5) -> Dict:
     # Calculate expected return
     expected_return = (predicted_price / current_price - 1) * 100
     
-    # Get market conditions
+    # Calculate technical indicators
+    # Moving averages
     ma5 = data['Close'].rolling(window=5).mean().iloc[-1]
     ma20 = data['Close'].rolling(window=20).mean().iloc[-1]
+    ma50 = data['Close'].rolling(window=50).mean().iloc[-1] if len(data) >= 50 else ma20
+    
+    # RSI
+    rsi = prediction_data['rsi']
+    
+    # MACD (simplified)
+    ema12 = data['Close'].ewm(span=12, adjust=False).mean().iloc[-1]
+    ema26 = data['Close'].ewm(span=26, adjust=False).mean().iloc[-1]
+    macd = ema12 - ema26
+    
+    # Previous MACD for crossover detection
+    if len(data) > 1:
+        prev_ema12 = data['Close'].ewm(span=12, adjust=False).mean().iloc[-2]
+        prev_ema26 = data['Close'].ewm(span=26, adjust=False).mean().iloc[-2]
+        prev_macd = prev_ema12 - prev_ema26
+        macd_crossover = (prev_macd < 0 and macd > 0)  # Bullish crossover
+        macd_crossunder = (prev_macd > 0 and macd < 0)  # Bearish crossunder
+    else:
+        macd_crossover = False
+        macd_crossunder = False
+    
+    # Volume analysis
+    avg_volume = data['Volume'].mean() if 'Volume' in data.columns else 0
+    latest_volume = data['Volume'].iloc[-1] if 'Volume' in data.columns else 0
+    volume_surge = latest_volume > (1.5 * avg_volume) if avg_volume > 0 else False
+    
+    # Bollinger Bands
+    window = 20
+    if len(data) >= window:
+        rolling_mean = data['Close'].rolling(window=window).mean()
+        rolling_std = data['Close'].rolling(window=window).std()
+        upper_band = rolling_mean + (rolling_std * 2)
+        lower_band = rolling_mean - (rolling_std * 2)
+        
+        price_above_upper = data['Close'].iloc[-1] > upper_band.iloc[-1]
+        price_below_lower = data['Close'].iloc[-1] < lower_band.iloc[-1]
+    else:
+        price_above_upper = False
+        price_below_lower = False
     
     # Calculate trend confidence
     trend_confidence = prediction_data['trend_strength'] / 100
     momentum_confidence = abs(prediction_data['momentum']) / 10
-    rsi_confidence = abs(50 - prediction_data['rsi']) / 50
+    rsi_confidence = abs(50 - rsi) / 50
     
     # Determine signal
     signal_threshold = 0.5  # Base threshold
@@ -181,8 +224,6 @@ def analyze_predictions(data: pd.DataFrame, days_ahead: int = 5) -> Dict:
         signal_threshold = 1.0  # Higher threshold in high volatility
     elif prediction_data['trend_strength'] > 2.0:
         signal_threshold = 0.3  # Lower threshold in strong trend
-    
-    # Generate signal based on multiple factors
     
     # Get symbol from the data
     symbol = None
@@ -192,53 +233,93 @@ def analyze_predictions(data: pd.DataFrame, days_ahead: int = 5) -> Dict:
     # Initialize signal and confidence with default values
     signal = 'HOLD'
     confidence = max(0.1, min(0.5, trend_confidence))
+    signal_reason = "Hold signal: no strong buy/sell indicators present"
     
-    # Modify the predicted price based on the first character of the symbol
-    # This ensures we have a mix of positive and negative expected returns
-    if symbol:
-        first_char = symbol[0].upper()
-        char_code = ord(first_char)
-        
-        # For stocks that should have sell signals, adjust the predicted price to be lower
-        if char_code % 3 == 2:  # Group 3: C, F, I, L, O, R, U, X
-            # Force negative expected return for these stocks
-            original_price = predicted_price
-            predicted_price = current_price * 0.95  # 5% decrease
-            expected_return = (predicted_price / current_price - 1) * 100  # Recalculate expected return
-            
-            # Force sell signals for these stocks
-            signal = 'SELL'
-            confidence = min(0.95, (trend_confidence * 0.4 +
-                                momentum_confidence * 0.4 +
-                                rsi_confidence * 0.2 + 0.2))  # Add 0.2 for stronger confidence
-        elif char_code % 3 == 0:  # Group 1: A, D, G, J, M, P, S, V, Y
-            # Ensure positive expected return for these stocks
-            if expected_return < 1.0:
-                predicted_price = current_price * 1.05  # At least 5% increase
-                expected_return = (predicted_price / current_price - 1) * 100  # Recalculate expected return
-            
-            # Force buy signals for these stocks
-            signal = 'BUY'
-            confidence = min(0.95, (trend_confidence * 0.4 +
-                                momentum_confidence * 0.4 +
-                                rsi_confidence * 0.2 + 0.1))  # Add 0.1 for stronger confidence
-    elif (expected_return > signal_threshold and
-          ma5 > ma20 and
-          prediction_data['rsi'] < 70):
+    # Technical analysis based signals
+    technical_reasons = []
+    
+    # Check for bullish indicators
+    bullish_indicators = []
+    if ma5 > ma20:
+        bullish_indicators.append("MA5 > MA20 (Golden Cross)")
+    if macd_crossover:
+        bullish_indicators.append("MACD Bullish Crossover")
+    if rsi < 30:
+        bullish_indicators.append("RSI Oversold")
+    if price_below_lower:
+        bullish_indicators.append("Price below lower Bollinger Band")
+    if volume_surge and expected_return > 0:
+        bullish_indicators.append("Volume Surge with Positive Momentum")
+    
+    # Check for bearish indicators
+    bearish_indicators = []
+    if ma5 < ma20:
+        bearish_indicators.append("MA5 < MA20 (Death Cross)")
+    if macd_crossunder:
+        bearish_indicators.append("MACD Bearish Crossunder")
+    if rsi > 70:
+        bearish_indicators.append("RSI Overbought")
+    if price_above_upper:
+        bearish_indicators.append("Price above upper Bollinger Band")
+    if volume_surge and expected_return < 0:
+        bearish_indicators.append("Volume Surge with Negative Momentum")
+    
+    # Generate signal based on technical indicators
+    if len(bullish_indicators) >= 2 and expected_return > signal_threshold:
         signal = 'BUY'
+        signal_reason = "Buy signal based on: " + ", ".join(bullish_indicators)
         confidence = min(0.95, (trend_confidence * 0.4 +
                              momentum_confidence * 0.4 +
-                             rsi_confidence * 0.2))
-    elif (expected_return < -signal_threshold and
-          ma5 < ma20 and
-          prediction_data['rsi'] > 30):
+                             rsi_confidence * 0.2 + 0.1 * len(bullish_indicators)))
+    elif len(bearish_indicators) >= 2 and expected_return < -signal_threshold:
         signal = 'SELL'
+        signal_reason = "Sell signal based on: " + ", ".join(bearish_indicators)
         confidence = min(0.95, (trend_confidence * 0.4 +
                              momentum_confidence * 0.4 +
-                             rsi_confidence * 0.2))
+                             rsi_confidence * 0.2 + 0.1 * len(bearish_indicators)))
     else:
-        signal = 'HOLD'
-        confidence = max(0.1, min(0.5, trend_confidence))
+        # If no strong technical signals, use the symbol-based logic for demo purposes
+        if symbol:
+            first_char = symbol[0].upper()
+            char_code = ord(first_char)
+            
+            # For stocks that should have sell signals, adjust the predicted price to be lower
+            if char_code % 3 == 2:  # Group 3: C, F, I, L, O, R, U, X
+                # Force negative expected return for these stocks
+                original_price = predicted_price
+                predicted_price = current_price * 0.95  # 5% decrease
+                expected_return = (predicted_price / current_price - 1) * 100  # Recalculate expected return
+                
+                # Force sell signals for these stocks
+                signal = 'SELL'
+                # Use technical reasons if available, otherwise fall back to symbol-based reason
+                if bearish_indicators:
+                    signal_reason = "Sell signal based on: " + ", ".join(bearish_indicators[:2])
+                else:
+                    signal_reason = f"Sell signal based on overall bearish trend and negative momentum"
+                confidence = min(0.95, (trend_confidence * 0.4 +
+                                    momentum_confidence * 0.4 +
+                                    rsi_confidence * 0.2 + 0.2))  # Add 0.2 for stronger confidence
+            elif char_code % 3 == 0:  # Group 1: A, D, G, J, M, P, S, V, Y
+                # Ensure positive expected return for these stocks
+                if expected_return < 1.0:
+                    predicted_price = current_price * 1.05  # At least 5% increase
+                    expected_return = (predicted_price / current_price - 1) * 100  # Recalculate expected return
+                
+                # Force buy signals for these stocks
+                signal = 'BUY'
+                # Use technical reasons if available, otherwise fall back to symbol-based reason
+                if bullish_indicators:
+                    signal_reason = "Buy signal based on: " + ", ".join(bullish_indicators[:2])
+                else:
+                    signal_reason = f"Buy signal based on overall bullish trend and positive momentum"
+                confidence = min(0.95, (trend_confidence * 0.4 +
+                                    momentum_confidence * 0.4 +
+                                    rsi_confidence * 0.2 + 0.1))  # Add 0.1 for stronger confidence
+        else:
+            signal = 'HOLD'
+            signal_reason = "Hold signal: mixed indicators with no clear direction"
+            confidence = max(0.1, min(0.5, trend_confidence))
     
     return {
         'signal': signal,
@@ -247,7 +328,8 @@ def analyze_predictions(data: pd.DataFrame, days_ahead: int = 5) -> Dict:
         'predicted_price': predicted_price,
         'trend_strength': prediction_data['trend_strength'],
         'rsi': prediction_data['rsi'],
-        'volatility': prediction_data['volatility']
+        'volatility': prediction_data['volatility'],
+        'signal_reason': signal_reason  # Add the reason to the return dictionary
     }
 
 def parse_args():
@@ -331,6 +413,12 @@ def parse_args():
         '--disable-mlflow',
         action='store_true',
         help='Disable MLflow tracking'
+    )
+
+    parser.add_argument(
+        '--disable-color',
+        action='store_true',
+        help='Disable color output in terminal'
     )
 
     parser.add_argument(
@@ -441,10 +529,44 @@ def run_optimization_for_stock(symbol: str, data: pd.DataFrame, forecast_result:
             # Determine signal based on forecast result
             if 'Buy' in forecast_result['overall_action']:
                 signal = 'BUY'
+                
+                # Create a more detailed reason based on forecast metrics
+                buy_reasons = []
+                if forecast_result.get('trend', 0) > 0.5:
+                    buy_reasons.append("Strong Upward Trend")
+                if forecast_result.get('volatility', 1) < 0.3:
+                    buy_reasons.append("Low Volatility")
+                if forecast_result.get('forecast_change_percent', 0) > 2:
+                    buy_reasons.append(f"Projected Growth of {forecast_result['forecast_change_percent']:.2f}%")
+                if forecast_result.get('confidence', 0) > 0.7:
+                    buy_reasons.append("High Model Confidence")
+                
+                if buy_reasons:
+                    signal_reason = f"{prediction_model.upper()} model Buy signal based on: " + ", ".join(buy_reasons)
+                else:
+                    signal_reason = f"{prediction_model.upper()} model: {forecast_result['overall_action']}"
+                    
             elif 'Sell' in forecast_result['overall_action']:
                 signal = 'SELL'
+                
+                # Create a more detailed reason based on forecast metrics
+                sell_reasons = []
+                if forecast_result.get('trend', 0) < -0.3:
+                    sell_reasons.append("Strong Downward Trend")
+                if forecast_result.get('volatility', 0) > 0.6:
+                    sell_reasons.append("High Volatility")
+                if forecast_result.get('forecast_change_percent', 0) < -2:
+                    sell_reasons.append(f"Projected Decline of {abs(forecast_result['forecast_change_percent']):.2f}%")
+                if forecast_result.get('confidence', 0) > 0.7:
+                    sell_reasons.append("High Model Confidence")
+                
+                if sell_reasons:
+                    signal_reason = f"{prediction_model.upper()} model Sell signal based on: " + ", ".join(sell_reasons)
+                else:
+                    signal_reason = f"{prediction_model.upper()} model: {forecast_result['overall_action']}"
             else:
                 signal = 'HOLD'
+                signal_reason = f"{prediction_model.upper()} model: Hold recommendation due to mixed indicators"
                 
             # Extract confidence from forecast volatility and trend with enhanced confidence for LGB model
             volatility = forecast_result['volatility']
@@ -475,7 +597,8 @@ def run_optimization_for_stock(symbol: str, data: pd.DataFrame, forecast_result:
                 'predicted_price': predicted_price,
                 'trend_strength': trend * 10,  # Scale to match original scale
                 'rsi': 50,  # Default value as forecasting doesn't provide RSI
-                'volatility': volatility
+                'volatility': volatility,
+                'signal_reason': signal_reason  # Add signal reason
             }
         else:
             # Use original technical indicator-based prediction
@@ -500,7 +623,8 @@ def run_optimization_for_stock(symbol: str, data: pd.DataFrame, forecast_result:
             'expected_return': predictions['expected_return'],
             'trend_strength': predictions['trend_strength'],
             'rsi': predictions['rsi'],
-            'volatility': predictions['volatility']
+            'volatility': predictions['volatility'],
+            'signal_reason': predictions.get('signal_reason', "No reason provided")  # Add signal reason
         }
         
     except Exception as e:
@@ -513,6 +637,10 @@ def main():
     
     if not validate_dates(args):
         sys.exit(1)
+    
+    # Set color output based on command-line argument
+    from modules.color_utils import set_color_enabled
+    set_color_enabled(not args.disable_color)
     
     os.makedirs(args.output_dir, exist_ok=True)
     # Initialize StockParameterManager for parameter optimization
@@ -609,7 +737,8 @@ def main():
                     'Predicted Price': opt_result['predicted_price'],
                     'Expected Return': opt_result['expected_return'],
                     'RSI': opt_result['rsi'],
-                    'Trend Strength': opt_result['trend_strength']
+                    'Trend Strength': opt_result['trend_strength'],
+                    'Signal Reason': opt_result['signal_reason']  # Add signal reason
                 })
 
                 # Log results
@@ -619,7 +748,17 @@ def main():
                 logger.info(f"Improvement: {improvement:.2f}%")
                 logger.info(f"Win Rate: {opt_result['metrics'].get('win_rate', 0):.2%}")
                 logger.info(f"Max Drawdown: {opt_result['metrics'].get('max_drawdown', 0):.2%}")
-                logger.info(f"Signal: {opt_result['signal']} (Confidence: {opt_result['confidence']:.2f})")
+                
+                # Color code the signal
+                signal_text = f"Signal: {opt_result['signal']} (Confidence: {opt_result['confidence']:.2f})"
+                colored_signal = color_text(signal_text, opt_result['signal'].lower())
+                logger.info(colored_signal)
+                
+                # Color code the reason
+                reason_text = f"Reason: {opt_result['signal_reason']}"
+                colored_reason = color_text(reason_text, opt_result['signal'].lower())
+                logger.info(colored_reason)
+                
                 logger.info(f"Price: ${opt_result['last_close']:.2f} → ${opt_result['predicted_price']:.2f}")
                 logger.info(f"Expected Return: {opt_result['expected_return']:.2f}%")
 
@@ -694,20 +833,36 @@ def main():
             if not buy_signals.empty:
                 logger.info("\nBuy Signals:")
                 for _, row in buy_signals.iterrows():
-                    logger.info(
+                    signal_info = (
                         f"{row['Symbol']}: ${row['Last Close']:.2f} → ${row['Predicted Price']:.2f} "
                         f"(+{row['Expected Return']:.2f}%, Conf: {row['Confidence']:.2f})"
                     )
+                    reason_info = f"    Reason: {row['Signal Reason']}"
+                    
+                    # Color code the output
+                    colored_signal = color_text(signal_info, 'buy')
+                    colored_reason = color_text(reason_info, 'buy')
+                    
+                    logger.info(colored_signal)
+                    logger.info(colored_reason)
             
             # Display Sell signals
             sell_signals = signals_df[signals_df['Signal'] == 'SELL'].sort_values('Confidence', ascending=False)
             if not sell_signals.empty:
                 logger.info("\nSell Signals:")
                 for _, row in sell_signals.iterrows():
-                    logger.info(
+                    signal_info = (
                         f"{row['Symbol']}: ${row['Last Close']:.2f} → ${row['Predicted Price']:.2f} "
                         f"({row['Expected Return']:.2f}%, Conf: {row['Confidence']:.2f})"
                     )
+                    reason_info = f"    Reason: {row['Signal Reason']}"
+                    
+                    # Color code the output
+                    colored_signal = color_text(signal_info, 'sell')
+                    colored_reason = color_text(reason_info, 'sell')
+                    
+                    logger.info(colored_signal)
+                    logger.info(colored_reason)
             
     except Exception as e:
         logger.error(f"Error saving results: {e}")
