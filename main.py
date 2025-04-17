@@ -424,9 +424,9 @@ def parse_args():
     parser.add_argument(
         '--prediction-model',
         type=str,
-        choices=['original', 'ensemble', 'lgb'],
+        choices=['original', 'ensemble', 'lgb', 'deep'],
         default='ensemble',
-        help='Choose prediction model: original (technical indicators), ensemble (integrated ML model), or lgb (LightGBM model)'
+        help='Choose prediction model: original (technical indicators), ensemble (integrated ML model), lgb (LightGBM model), or deep (Deep Learning model)'
     )
     
     return parser.parse_args()
@@ -691,6 +691,14 @@ def main():
                     logger.info(f"[LGBModel] {symbol}: {forecast_result['overall_action']} | Next 10 days: {forecast_result['daily_actions']}")
                 except Exception as e:
                     logger.error(f"[LGBModel] Error for {symbol}: {e}")
+                    forecast_result = None
+            elif args.prediction_model == 'deep':
+                try:
+                    forecasting_manager = ForecastingManager(forecast_horizon=10)
+                    forecast_result = forecasting_manager.generate_forecast(symbol, data, model_type='deep', use_stored_model=True)
+                    logger.info(f"[DeepLearningModel] {symbol}: {forecast_result['overall_action']} | Next 10 days: {forecast_result['daily_actions']}")
+                except Exception as e:
+                    logger.error(f"[DeepLearningModel] Error for {symbol}: {e}")
                     forecast_result = None
             else:
                 # Use original technical indicator-based prediction
