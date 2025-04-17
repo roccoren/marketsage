@@ -8,6 +8,8 @@ scikit-learn==1.0.2  # For forecasting models
 catboost==1.0.6  # For CatBoost models
 xgboost==1.7.4  # For XGBoost models
 torch==2.0.1  # For PyTorch models
+torchvision==0.15.2  # For PyTorch visualization utilities
+seaborn==0.12.2  # For statistical data visualization
 lightgbm==3.3.5  # For LightGBM models
 
 # Storage

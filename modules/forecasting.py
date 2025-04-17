@@ -371,9 +371,25 @@ class ForecastingManager:
         # Available models
         self.model_factories = {
             'lgb': lambda **kwargs: LGBModel(**kwargs),
+            'deep': lambda **kwargs: self._create_deep_model(**kwargs),
             # LSTM model temporarily disabled
             # 'lstm': lambda **kwargs: QlibLSTMModel(**kwargs)
         }
+    
+    def _create_deep_model(self, **kwargs):
+        """
+        Create a deep learning model instance.
+        This method is used to avoid circular imports.
+        
+        Args:
+            **kwargs: Parameters to pass to the DeepLearningModel constructor
+            
+        Returns:
+            DeepLearningModel instance
+        """
+        # Import here to avoid circular imports
+        from modules.deep_learning_model import DeepLearningModel
+        return DeepLearningModel(**kwargs)
     
     def prepare_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
         # Create features
@@ -490,9 +506,23 @@ class ForecastingManager:
         np.random.seed(RANDOM_SEED)
         
         for _ in range(self.forecast_horizon):
-            # Predict next value
-            next_value = model.predict(last_features)[0]
-            forecasts.append(next_value)
+            try:
+                # Predict next value
+                predictions = model.predict(last_features)
+                # Handle empty or scalar predictions
+                if isinstance(predictions, np.ndarray) and len(predictions) > 0:
+                    next_value = predictions[0]
+                else:
+                    next_value = predictions  # Handle scalar value
+                forecasts.append(next_value)
+            except Exception as e:
+                import logging
+                logging.error(f"Error in prediction: {e}")
+                # Use last prediction or last price if no predictions yet
+                if forecasts:
+                    forecasts.append(forecasts[-1])
+                else:
+                    forecasts.append(last_price)
             
             # This is a simplified approach; in a real implementation,
             # we would need to update all features based on the predicted value
