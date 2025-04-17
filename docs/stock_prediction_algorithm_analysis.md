@@ -1,3 +1,37 @@
+## Checklist for Achieving Reproducible Results
+
+1. **Set Random Seeds in Code**
+   - At the start of your main script (main.py), set seeds for:
+     - Python built-in random: `random.seed(42)`
+     - NumPy: `np.random.seed(42)`
+     - Any ML framework used (e.g., scikit-learn, PyTorch, TensorFlow)
+
+2. **Update Model Config Files**
+   - For all `ensemble.json` and other model config files, set:
+     - `"random_state": 42` (or another fixed integer)
+
+3. **Check for Additional Sources of Randomness**
+   - Ensure any data shuffling, splitting, or augmentation uses a fixed seed or random_state.
+   - For parallel/distributed ML libraries, check documentation for extra determinism flags.
+
+4. **Pin Dependency Versions**
+   - In `requirements.txt`, pin all library versions to avoid changes in behavior due to library updates.
+
+5. **Document the Reproducibility Steps**
+   - Add a section in your documentation describing how to reproduce results and which seeds/configs are used.
+
+---
+
+```mermaid
+flowchart TD
+    A[Start main.py] --> B[Set random seeds for all libraries]
+    B --> C[Update model configs with random_state]
+    C --> D[Check for other randomness sources]
+    D --> E[Pin dependency versions]
+    E --> F[Document reproducibility steps]
+    F --> G[Run pipeline: Results are reproducible]
+```
+
 # 股票预测系统算法与参数分析
 
 根据对代码库的全面分析，我现在可以详细解释该系统在预测股票时采用的算法和参数。

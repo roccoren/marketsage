@@ -7,6 +7,7 @@ using Qlib's model framework and ensemble techniques.
 
 import os
 import json
+import random
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Optional, Union, Tuple, Callable
@@ -20,6 +21,11 @@ from sklearn.ensemble import GradientBoostingRegressor
 # from qlib.contrib.model.pytorch.lstm import LSTMModel
 
 from modules.storage import StorageManager
+
+# Set global random seeds for reproducibility
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
 
 
 class ForecastModel(ABC):
@@ -57,7 +63,8 @@ class LGBModel(ForecastModel):
             'num_leaves': 31,
             'learning_rate': 0.05,
             'feature_fraction': 0.9,
-            'n_estimators': 100
+            'n_estimators': 100,
+            'random_state': 42  # Fixed random_state for reproducibility
         }
         self.params.update(kwargs)
         self.model = lgb.LGBMRegressor(**self.params)
@@ -142,7 +149,12 @@ class EnsembleModel(ForecastModel):
     
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
         """Train the model on historical data using cross-validation."""
+        # Reset random seeds before training
+        random.seed(RANDOM_SEED)
+        np.random.seed(RANDOM_SEED)
+        
         # Use TimeSeriesSplit for time series cross-validation
+        # TimeSeriesSplit is deterministic as it doesn't shuffle data
         tscv = TimeSeriesSplit(n_splits=5)
         model_errors = [[] for _ in range(len(self.models))]
         
@@ -472,6 +484,10 @@ class ForecastingManager:
         # Generate forecast for the next periods (2 weeks = 10 trading days)
         last_features = X.iloc[-1:].copy()
         forecasts = []
+        
+        # Reset random seeds before generating forecasts for reproducibility
+        random.seed(RANDOM_SEED)
+        np.random.seed(RANDOM_SEED)
         
         for _ in range(self.forecast_horizon):
             # Predict next value
