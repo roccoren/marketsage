@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Data acquisition module for the Qlib-based quantitative analysis project.
+Data acquisition module for the MarketSage quantitative analysis project.
 This module provides functions to fetch and process stock data using Qlib's
 data framework and ExpressionEngine.
 """
@@ -43,7 +43,7 @@ class DataAcquisitionManager:
     
     def _init_qlib(self):
         """Initialize Qlib with default settings."""
-        provider_uri = os.getenv('QLIB_DATA_PATH', 'data/qlib_data')
+        provider_uri = os.getenv('MARKETSAGE_DATA_PATH', 'data/marketsage_data')
         
         # Create data directory if it doesn't exist
         Path(provider_uri).mkdir(parents=True, exist_ok=True)

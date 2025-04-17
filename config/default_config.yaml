@@ -1,8 +1,8 @@
-# Default configuration for Qlib-based quantitative analysis project
+# Default configuration for MarketSage quantitative analysis project
 
-# Qlib configuration
-qlib:
-  provider_uri: "data/qlib_data"  # Local data directory
+# MarketSage configuration
+marketsage:
+  provider_uri: "data/marketsage_data"  # Local data directory
   region: "us"  # Market region (us, cn, etc.)
   logging_level: INFO
   feature_cache:
@@ -47,7 +47,7 @@ forecasting:
   # Default forecast horizon (days)
   horizon: 10
   
-  # Qlib model configuration
+  # MarketSage model configuration
   models:
     lgb:
       num_boost_round: 100
@@ -93,7 +93,7 @@ forecasting:
 
 # Backtesting configuration
 backtesting:
-  # Qlib backtest configuration
+  # MarketSage backtest configuration
   executor:
     type: "SimulatorExecutor"
     configs:
@@ -132,7 +132,7 @@ backtesting:
 # MLflow configuration
 mlflow:
   # Experiment name
-  experiment_name: qlib_workflow
+  experiment_name: marketsage
   
   # Tracking URI (empty for local)
   tracking_uri: ""
@@ -146,7 +146,7 @@ logging:
   level: INFO
   
   # Log file
-  file: logs/qlib_workflow.log
+  file: logs/marketsage.log
   
   # Maximum log file size in bytes
   max_size: 10485760  # 10 MB
@@ -172,7 +172,7 @@ error_handling:
     smtp_port: 587
     sender: ""
     recipients: []
-    subject_prefix: "[QLIB ERROR]"
+    subject_prefix: "[MARKETSAGE ERROR]"
 
 # Asynchronous processing configuration
 async:

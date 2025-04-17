@@ -19,9 +19,9 @@ logger = get_module_logger("MLflowManager")
 
 class MLflowManager:
     """
-    Manages MLflow experiment tracking integrated with Qlib's workflow.
+    Manages MLflow experiment tracking integrated with MarketSage's workflow.
     """
-    def __init__(self, experiment_name="qlib_workflow", tracking_uri=None):
+    def __init__(self, experiment_name="marketsage", tracking_uri=None):
         """
         Initialize MLflow tracking.
         
@@ -54,7 +54,7 @@ class MLflowManager:
             
     def start_run(self, run_name=None):
         """
-        Start a new MLflow run integrated with Qlib's workflow if available.
+        Start a new MLflow run integrated with MarketSage's workflow if available.
         
         Args:
             run_name (str, optional): Name for the run. If None, uses timestamp.
@@ -300,7 +300,7 @@ def log_experiment(data, forecasts, backtest_results):
         if QLIB_AVAILABLE and R is not None:
             # Try with Qlib integration
             try:
-                with R.start(experiment_name="qlib_workflow"):
+                with R.start(experiment_name="marketsage"):
                     mlflow_manager.start_run(run_name)
                     _log_experiment_data(mlflow_manager, data, forecasts, backtest_results)
             except Exception as e:

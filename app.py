@@ -31,7 +31,7 @@ st.set_page_config(
 )
 
 # Define functions for loading data
-def get_mlflow_runs(experiment_name="stock_analysis", max_results=100):
+def get_mlflow_runs(experiment_name="marketsage", max_results=100):
     """Get MLflow runs for the specified experiment."""
     try:
         # Get experiment by name
@@ -151,7 +151,7 @@ def main():
     # Experiment selection
     experiment_name = st.sidebar.text_input(
         "Experiment Name",
-        value="stock_analysis"
+        value="marketsage"
     )
     
     # Data source selection
