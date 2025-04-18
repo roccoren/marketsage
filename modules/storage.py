@@ -29,8 +29,22 @@ class StorageBackend(ABC):
         pass
     
     @abstractmethod
-    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any]) -> bool:
-        """Save model parameters."""
+    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any],
+                         version: str = None, description: str = None, metrics: Dict[str, Any] = None) -> bool:
+        """
+        Save model parameters.
+        
+        Args:
+            symbol (str): Stock symbol
+            model_name (str): Name of the model
+            params (Dict[str, Any]): Model parameters
+            version (str, optional): Version identifier
+            description (str, optional): Model description
+            metrics (Dict[str, Any], optional): Model performance metrics
+            
+        Returns:
+            bool: Success status
+        """
         pass
     
     @abstractmethod
@@ -72,6 +86,9 @@ class StorageManager:
         elif backend_type == "tsdb":
             from modules.storage_backends.tsdb_storage import TimeSeriesDBStorage
             return TimeSeriesDBStorage(**kwargs)
+        elif backend_type == "influxdb":
+            from modules.storage_backends.influxdb_storage import InfluxDBStorage
+            return InfluxDBStorage(**kwargs)
         else:
             raise ValueError(f"Unknown backend type: {backend_type}")
     
@@ -90,9 +107,24 @@ class StorageManager:
         """Load data for a symbol with optional date filtering."""
         return self.backend.load_data(symbol, start_date, end_date)
     
-    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any]) -> bool:
-        """Save model parameters."""
-        return self.backend.save_model_params(symbol, model_name, params)
+    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any],
+                         version: str = None, description: str = None, metrics: Dict[str, Any] = None) -> bool:
+        """
+        Save model parameters.
+        
+        Args:
+            symbol (str): Stock symbol
+            model_name (str): Name of the model
+            params (Dict[str, Any]): Model parameters
+            version (str, optional): Version identifier
+            description (str, optional): Model description
+            metrics (Dict[str, Any], optional): Model performance metrics
+            
+        Returns:
+            bool: Success status
+        """
+        return self.backend.save_model_params(symbol, model_name, params,
+                                             version=version, description=description, metrics=metrics)
     
     def load_model_params(self, symbol: str, model_name: str) -> Dict[str, Any]:
         """Load model parameters."""
@@ -116,9 +148,29 @@ class StorageManager:
         """Load data for a symbol asynchronously."""
         return await self.loop.run_in_executor(None, self.backend.load_data, symbol, start_date, end_date)
     
-    async def save_model_params_async(self, symbol: str, model_name: str, params: Dict[str, Any]) -> bool:
-        """Save model parameters asynchronously."""
-        return await self.loop.run_in_executor(None, self.backend.save_model_params, symbol, model_name, params)
+    async def save_model_params_async(self, symbol: str, model_name: str, params: Dict[str, Any],
+                                    version: str = None, description: str = None, metrics: Dict[str, Any] = None) -> bool:
+        """
+        Save model parameters asynchronously.
+        
+        Args:
+            symbol (str): Stock symbol
+            model_name (str): Name of the model
+            params (Dict[str, Any]): Model parameters
+            version (str, optional): Version identifier
+            description (str, optional): Model description
+            metrics (Dict[str, Any], optional): Model performance metrics
+            
+        Returns:
+            bool: Success status
+        """
+        # We can't directly pass keyword arguments to run_in_executor, so we need a lambda
+        return await self.loop.run_in_executor(
+            None,
+            lambda: self.backend.save_model_params(
+                symbol, model_name, params, version=version, description=description, metrics=metrics
+            )
+        )
     
     async def load_model_params_async(self, symbol: str, model_name: str) -> Dict[str, Any]:
         """Load model parameters asynchronously."""

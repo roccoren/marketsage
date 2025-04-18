@@ -1,0 +1,28 @@
+version: '3'
+
+services:
+  dash:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dash
+    container_name: stockscan-dash
+    ports:
+      - "8050:8050"
+    volumes:
+      - ../config:/app/config
+    environment:
+      - CONFIG_FILE=/app/config/default_config.yaml
+      # Override connection settings for Docker networking
+      - INFLUXDB_URL=http://influxdb:8086
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    restart: unless-stopped
+    networks:
+      - dash-network
+      - middleware-network
+
+networks:
+  dash-network:
+    driver: bridge
+  middleware-network:
+    external: true
+    name: middleware-network

@@ -14,7 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - mlflow-network
+      - stockscan-network
 
   mlflow:
     image: python:3.9
@@ -35,12 +35,51 @@ services:
                --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow
                --default-artifact-root /mlflow/artifacts"
     networks:
-      - mlflow-network
+      - stockscan-network
+
+  influxdb:
+    image: influxdb:2.0
+    container_name: stockscan-influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=stockscanadmin
+      - DOCKER_INFLUXDB_INIT_ORG=stockscan
+      - DOCKER_INFLUXDB_INIT_BUCKET=stock_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=stockscantoken
+    restart: unless-stopped
+    networks:
+      - stockscan-network
+
+  dash:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dash
+    container_name: stockscan-dash
+    ports:
+      - "8050:8050"
+    environment:
+      # Change this to your remote InfluxDB URL, e.g., http://your-server-ip:8086
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=stockscantoken
+      - INFLUXDB_ORG=stockscan
+      - INFLUXDB_BUCKET=stock_data
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    restart: unless-stopped
+    networks:
+      - stockscan-network
 
 networks:
-  mlflow-network:
+  stockscan-network:
     driver: bridge
 
 volumes:
   postgres_data:
   mlflow_artifacts:
+  influxdb-data:

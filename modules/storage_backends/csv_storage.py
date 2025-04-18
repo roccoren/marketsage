@@ -80,7 +80,8 @@ class CSVStorage(StorageBackend):
             print(f"Error loading data for {symbol}: {e}")
             return pd.DataFrame()
     
-    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any]) -> bool:
+    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any],
+                         version: str = None, description: str = None, metrics: Dict[str, Any] = None) -> bool:
         """
         Save model parameters to a JSON file.
         
@@ -88,6 +89,9 @@ class CSVStorage(StorageBackend):
             symbol (str): Stock symbol
             model_name (str): Name of the model
             params (Dict[str, Any]): Model parameters
+            version (str, optional): Version identifier (ignored in CSV storage)
+            description (str, optional): Model description (ignored in CSV storage)
+            metrics (Dict[str, Any], optional): Model performance metrics (ignored in CSV storage)
             
         Returns:
             bool: Success status

@@ -122,6 +122,22 @@ class DataAcquisitionManager:
                 df = yf.download(symbol, start=start_date, end=end_date, progress=False)
                 
                 if not df.empty:
+                    # Handle multi-level column format if present
+                    if isinstance(df.columns, pd.MultiIndex):
+                        # Convert multi-level columns to standard format
+                        df = df.copy()
+                        df.columns = [col[0] for col in df.columns]
+                    
+                    # Ensure we have the expected column names
+                    expected_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+                    for col in expected_columns:
+                        if col not in df.columns:
+                            print(f"Column {col} missing for {symbol}, adding empty column")
+                            df[col] = 0.0
+                    
+                    # Set the name attribute for identification
+                    df.name = symbol
+                    
                     return df
                     
                 print(f"No data returned for {symbol}, retrying...")

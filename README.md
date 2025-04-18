@@ -8,7 +8,8 @@ A comprehensive quantitative analysis workflow based on Microsoft Qlib, providin
 - **Storage Abstraction**: Unified storage interface with multiple backends:
   - CSV storage for simple file-based storage
   - SQLite storage for relational database storage
-  - Time-series database integration (placeholder for InfluxDB, TimescaleDB, or QuestDB)
+  - InfluxDB storage for time-series data
+  - Mock InfluxDB for testing
 - **Forecasting Models**: Hybrid forecasting approach with multiple models:
   - Linear regression models
   - Random forest models
@@ -33,6 +34,7 @@ A comprehensive quantitative analysis workflow based on Microsoft Qlib, providin
   - Sharpe, Sortino, and Calmar ratios
 - **MLflow Integration**: Track experiments, parameters, metrics, and artifacts.
 - **Configuration Management**: Centralized configuration using YAML/JSON files and environment variables.
+- **Visualization Dashboard**: Interactive Dash application for data visualization and model management.
 - **Event-Driven Architecture**: Lightweight event dispatcher for inter-module communication.
 - **Structured Logging**: Advanced logging with Loguru, including remote logging capabilities.
 - **Scheduled Updates**: Daily data updates using APScheduler.
@@ -109,6 +111,35 @@ You can also override configuration with environment variables:
 MARKETSAGE_STORAGE_BACKEND=sqlite python main.py
 ```
 
+### Connection Configuration
+
+Database and service connection strings are centralized in the configuration file under the `connections` section:
+
+```yaml
+connections:
+  # InfluxDB configuration
+  influxdb:
+    url: http://localhost:8086
+    token: stockscantoken
+    org: stockscan
+    bucket: stock_data
+  
+  # MLflow configuration
+  mlflow:
+    tracking_uri: http://localhost:5000
+    experiment_name: marketsage
+    artifact_dir: mlruns
+```
+
+These connection settings can be accessed programmatically using the `connection_config` module:
+
+```python
+from modules.connection_config import get_influxdb_config, get_mlflow_config
+
+influxdb_config = get_influxdb_config()
+mlflow_config = get_mlflow_config()
+```
+
 ## Project Structure
 
 ```
@@ -122,6 +153,7 @@ marketsage/
 │   ├── storage_backends/    # Storage backend implementations
 │   ├── backtesting.py       # Backtesting module
 │   ├── config_manager.py    # Configuration management
+│   ├── connection_config.py # Connection configuration utility
 │   ├── data_acquisition.py  # Data acquisition module
 │   ├── event_dispatcher.py  # Event dispatcher
 │   ├── forecasting.py       # Forecasting module
@@ -132,6 +164,10 @@ marketsage/
 │   ├── stock_manager.py     # Stock management
 │   ├── storage.py           # Storage abstraction
 │   └── workflow_manager.py  # Workflow orchestration
+├── scripts/                 # Deployment scripts
+├── assets/                  # Dashboard assets
+├── dash_app.py              # Dash visualization application
+├── migrate_to_influxdb.py   # Data migration script
 ├── main.py                  # Main entry point
 └── requirements.txt         # Dependencies
 ```
@@ -146,14 +182,62 @@ mlflow ui
 
 Then open your browser at http://localhost:5000
 
-## Docker Support
+## Visualization Dashboard
 
-You can run the project in Docker:
+The project includes an interactive Dash application for data visualization and model management:
 
 ```bash
-cd docker
-docker-compose up
+python dash_app.py
 ```
+
+Then open your browser at http://localhost:8050
+
+## Deployment Options
+
+### Docker Deployment
+
+You can deploy the middleware components (InfluxDB, PostgreSQL, MLflow) and the Dash application separately:
+
+```bash
+# Deploy middleware components
+./scripts/deploy_middleware_docker.sh
+
+# Deploy Dash application
+./scripts/deploy_dash_docker.sh
+```
+
+### Standalone Deployment
+
+You can deploy the Dash application as a standalone Python application:
+
+```bash
+./scripts/deploy_dash_standalone.sh
+```
+
+### Systemd Service Deployment
+
+You can deploy the Dash application as a systemd service on Linux:
+
+```bash
+sudo ./scripts/install_systemd_service.sh
+```
+
+### Cloud Deployment
+
+You can deploy the Dash application to Azure:
+
+```bash
+# Prepare deployment package
+./scripts/cloud/azure/prepare_deployment.sh
+
+# Deploy to Azure App Service
+./scripts/cloud/azure/deploy_app_service.sh
+
+# Or deploy to Azure Container Apps
+./scripts/cloud/azure/deploy_container_app.sh
+```
+
+See the [scripts/README.md](scripts/README.md) file for more details on deployment options.
 
 ## Contributing
 

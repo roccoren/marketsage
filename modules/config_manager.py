@@ -59,6 +59,7 @@ class ConfigManager:
                     print(f"Unsupported configuration file format: {file_ext}")
             
             print(f"Loaded configuration from {config_file}")
+            print(f"Config content: {self.config}")
         except Exception as e:
             print(f"Error loading configuration file: {e}")
     
@@ -197,6 +198,10 @@ def get_config_manager(config_file: Optional[str] = None, env_prefix: str = "MAR
     
     if _default_config_manager is None:
         _default_config_manager = ConfigManager(config_file, env_prefix)
+    elif config_file is not None and config_file != _default_config_manager.config_file:
+        # If a new config file is provided and it's different from the current one, load it
+        print(f"Loading new config file: {config_file}")
+        _default_config_manager.load_config_file(config_file)
     
     return _default_config_manager
 

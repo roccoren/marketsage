@@ -1,0 +1,17 @@
+[Unit]
+Description=StockScan Dash Application
+After=network.target
+
+[Service]
+User=stockscan
+WorkingDirectory=/path/to/stockscan
+ExecStart=/path/to/stockscan/venv/bin/python /path/to/stockscan/dash_app.py
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=stockscan-dash
+Environment="CONFIG_FILE=/path/to/stockscan/config/default_config.yaml"
+
+[Install]
+WantedBy=multi-user.target

@@ -84,11 +84,21 @@ def fetch_incremental_stock_data(storage_manager, symbol, start_date, end_date):
             if df is not None and not df.empty:
                 new_data.append(df)
         if new_data:
-            all_data = pd.concat([existing] + new_data)
-            all_data.index = pd.to_datetime(all_data.index).normalize()
-            all_data = all_data[~all_data.index.duplicated(keep='last')].sort_index()
-            storage_manager.save_data(symbol, all_data)
-            return all_data
+            try:
+                all_data = pd.concat([existing] + new_data)
+                all_data.index = pd.to_datetime(all_data.index).normalize()
+                # Handle duplicate indices more carefully
+                if all_data.index.duplicated().any():
+                    all_data = all_data[~all_data.index.duplicated(keep='last')]
+                all_data = all_data.sort_index()
+                storage_manager.save_data(symbol, all_data)
+                return all_data
+            except Exception as e:
+                logger.error(f"Error merging data for {symbol}: {e}")
+                # Return the most recent data we have
+                if len(new_data) > 0 and len(new_data[-1]) > 0:
+                    return new_data[-1]
+                return existing
         else:
             return existing
     else:
@@ -449,11 +459,25 @@ def fetch_stock_data(symbol: str, start_date: str, end_date: str) -> pd.DataFram
         random.seed(RANDOM_SEED)
         np.random.seed(RANDOM_SEED)
         
-        stock = yf.Ticker(symbol)
-        data = stock.history(start=start_date, end=end_date)
+        # Use direct download instead of Ticker.history
+        data = yf.download(symbol, start=start_date, end=end_date, progress=False)
+        
         if len(data) == 0:
             logger.error(f"No data found for {symbol}")
             return None
+        
+        # Handle multi-level column format if present
+        if isinstance(data.columns, pd.MultiIndex):
+            # Convert multi-level columns to standard format
+            data = data.copy()
+            data.columns = [col[0] for col in data.columns]
+            
+        # Ensure we have the expected column names
+        expected_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        for col in expected_columns:
+            if col not in data.columns:
+                logger.warning(f"Column {col} missing for {symbol}, adding empty column")
+                data[col] = 0.0
             
         # Ensure index is tz-naive
         if hasattr(data.index, "tz_convert") and data.index.tz is not None:
@@ -465,8 +489,12 @@ def fetch_stock_data(symbol: str, start_date: str, end_date: str) -> pd.DataFram
         
         # Round values to 6 decimal places to reduce floating point variability
         for col in data.columns:
-            if data[col].dtype.kind in 'fc':  # float or complex
+            # Check if the column contains numeric data
+            if pd.api.types.is_numeric_dtype(data[col]):
                 data[col] = data[col].round(6)
+        
+        # Set the name attribute for identification
+        data.name = symbol
                 
         logger.info(f"Fetched {len(data)} data points for {symbol}")
         return data
@@ -642,6 +670,11 @@ def main():
     from modules.color_utils import set_color_enabled
     set_color_enabled(not args.disable_color)
     
+    # Initialize configuration manager with default config file
+    from modules.config_manager import get_config_manager
+    config_manager = get_config_manager("config/default_config.yaml")
+    print(f"Configuration loaded from config/default_config.yaml")
+    
     os.makedirs(args.output_dir, exist_ok=True)
     # Initialize StockParameterManager for parameter optimization
     param_manager = StockParameterManager()
@@ -650,21 +683,48 @@ def main():
     if not symbols:
         sys.exit(1)
     
+    # Use the command-line arguments for date range
+    # But ensure we're not requesting future data
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    data_start_date = args.data_start_date
+    
+    # Check if end date is in the future
+    if args.data_end_date > current_date:
+        data_end_date = current_date
+        logger.info(f"Adjusted end date from {args.data_end_date} to current date {data_end_date} (cannot fetch future data)")
+    else:
+        data_end_date = args.data_end_date
+    
+    # Avoid problematic date boundaries (like month/year transitions)
+    # by subtracting one day from the end date if it's the last day of a month/year
+    end_dt = pd.to_datetime(data_end_date)
+    if end_dt.day == pd.to_datetime(f"{end_dt.year}-{end_dt.month}-01") + pd.offsets.MonthEnd(0) - pd.Timedelta(days=1):
+        data_end_date = (end_dt - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        logger.info(f"Adjusted end date to {data_end_date} to avoid month-end boundary issues")
+    
+    logger.info(f"Using date range from command line: {data_start_date} to {data_end_date} for data fetching")
+    
     # Fetch stock data
     stock_data = {}
     
     # Process stocks sequentially for deterministic behavior
     # This ensures the same execution order every time
-    storage_manager = StorageManager()
+    storage_manager = StorageManager(backend_type="influxdb")
+    logger.info("Using InfluxDB storage backend")
     for symbol in symbols:
         try:
             # Reset random seeds before each stock processing
             random.seed(RANDOM_SEED)
             np.random.seed(RANDOM_SEED)
             
-            data = fetch_incremental_stock_data(storage_manager, symbol, args.data_start_date, args.data_end_date)
-            if data is not None:
+            # Use incremental fetch to save data to InfluxDB
+            data = fetch_incremental_stock_data(storage_manager, symbol, data_start_date, data_end_date)
+            
+            if data is not None and not data.empty and len(data) > 10:  # Ensure we have enough data points
                 stock_data[symbol] = data
+                logger.info(f"Successfully loaded {len(data)} data points for {symbol}")
+            else:
+                logger.warning(f"Insufficient data for {symbol}, skipping")
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}")
     

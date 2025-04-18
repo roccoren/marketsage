@@ -191,3 +191,18 @@ events:
   handlers:
     log_events: true
     store_events: false
+
+# Database and service connections
+connections:
+  # InfluxDB configuration
+  influxdb:
+    url: http://128.85.51.203:8086
+    token: stockscantoken
+    org: stockscan
+    bucket: stock_data
+  
+  # MLflow configuration
+  mlflow:
+    tracking_uri: http://128.85.51.203:5000
+    experiment_name: marketsage
+    artifact_dir: mlruns

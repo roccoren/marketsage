@@ -70,7 +70,8 @@ class TimeSeriesDBStorage(StorageBackend):
         # For now, use the fallback
         return self.fallback.load_data(symbol, start_date, end_date)
     
-    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any]) -> bool:
+    def save_model_params(self, symbol: str, model_name: str, params: Dict[str, Any],
+                         version: str = None, description: str = None, metrics: Dict[str, Any] = None) -> bool:
         """
         Save model parameters to the time-series database.
         
@@ -78,6 +79,9 @@ class TimeSeriesDBStorage(StorageBackend):
             symbol (str): Stock symbol
             model_name (str): Name of the model
             params (Dict[str, Any]): Model parameters
+            version (str, optional): Version identifier
+            description (str, optional): Model description
+            metrics (Dict[str, Any], optional): Model performance metrics
             
         Returns:
             bool: Success status
@@ -86,7 +90,8 @@ class TimeSeriesDBStorage(StorageBackend):
         print(f"Would save {symbol}/{model_name} parameters to time-series database")
         
         # For now, use the fallback
-        return self.fallback.save_model_params(symbol, model_name, params)
+        return self.fallback.save_model_params(symbol, model_name, params,
+                                              version=version, description=description, metrics=metrics)
     
     def load_model_params(self, symbol: str, model_name: str) -> Dict[str, Any]:
         """
