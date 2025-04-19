@@ -213,7 +213,11 @@ class LSTMArchitecture(ModelArchitecture):
             
             # Apply attention
             context_vector = layers.Multiply()([x, attention_weights])
-            context_vector = layers.Lambda(lambda x: tf.reduce_sum(x, axis=1))(context_vector)
+            # Add output_shape parameter to Lambda layer to fix loading issue
+            context_vector = layers.Lambda(
+                lambda x: tf.reduce_sum(x, axis=1),
+                output_shape=(hidden_size * (2 if bidirectional else 1),)
+            )(context_vector)
             
             # Output layers
             x = layers.Dense(64, activation='relu')(context_vector)
@@ -366,7 +370,11 @@ class GRUArchitecture(ModelArchitecture):
             
             # Apply attention
             context_vector = layers.Multiply()([x, attention_weights])
-            context_vector = layers.Lambda(lambda x: tf.reduce_sum(x, axis=1))(context_vector)
+            # Add output_shape parameter to Lambda layer to fix loading issue
+            context_vector = layers.Lambda(
+                lambda x: tf.reduce_sum(x, axis=1),
+                output_shape=(hidden_size * (2 if bidirectional else 1),)
+            )(context_vector)
             
             # Output layers
             x = layers.Dense(64, activation='relu')(context_vector)
@@ -750,7 +758,11 @@ class DualOutputArchitecture(ModelArchitecture):
             
             # Apply attention
             context_vector = layers.Multiply()([x, attention_weights])
-            context_vector = layers.Lambda(lambda x: tf.reduce_sum(x, axis=1))(context_vector)
+            # Add output_shape parameter to Lambda layer to fix loading issue
+            context_vector = layers.Lambda(
+                lambda x: tf.reduce_sum(x, axis=1),
+                output_shape=(hidden_size,)
+            )(context_vector)
             
             # Classification output
             classification = layers.Dense(64, activation='relu')(context_vector)
