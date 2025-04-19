@@ -434,9 +434,9 @@ def parse_args():
     parser.add_argument(
         '--prediction-model',
         type=str,
-        choices=['original', 'ensemble', 'lgb', 'deep'],
+        choices=['original', 'ensemble', 'lgb', 'deep', 'lstm'],
         default='ensemble',
-        help='Choose prediction model: original (technical indicators), ensemble (integrated ML model), lgb (LightGBM model), or deep (Deep Learning model)'
+        help='Choose prediction model: original (technical indicators), ensemble (integrated ML model), lgb (LightGBM model), deep (Deep Learning model), or lstm (LSTM-based trading prediction model)'
     )
     
     return parser.parse_args()
@@ -548,7 +548,7 @@ def run_optimization_for_stock(symbol: str, data: pd.DataFrame, forecast_result:
         data.name = symbol
         
         # Generate predictions based on the model type
-        if prediction_model in ['ensemble', 'lgb'] and forecast_result is not None:
+        if prediction_model in ['ensemble', 'lgb', 'lstm'] and forecast_result is not None:
             # Use forecasting model results
             last_close = data['Close'].iloc[-1]
             forecast_change = forecast_result['forecast_change_percent']
@@ -759,6 +759,17 @@ def main():
                     logger.info(f"[DeepLearningModel] {symbol}: {forecast_result['overall_action']} | Next 10 days: {forecast_result['daily_actions']}")
                 except Exception as e:
                     logger.error(f"[DeepLearningModel] Error for {symbol}: {e}")
+                    forecast_result = None
+            elif args.prediction_model == 'lstm':
+                try:
+                    # Import the trading prediction integration module
+                    from modules.trading_prediction.integration import get_trading_prediction
+                    
+                    # Generate forecast using the LSTM model
+                    forecast_result = get_trading_prediction(symbol, data)
+                    logger.info(f"[LSTMModel] {symbol}: {forecast_result['overall_action']} | Expected change: {forecast_result['forecast_change_percent']:.2f}%")
+                except Exception as e:
+                    logger.error(f"[LSTMModel] Error for {symbol}: {e}")
                     forecast_result = None
             else:
                 # Use original technical indicator-based prediction

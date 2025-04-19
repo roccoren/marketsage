@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Connection configuration utility for the StockScan project.
+Connection configuration utility for the MarketSage project.
 This module provides easy access to connection strings for databases and services.
 """
 
@@ -21,8 +21,8 @@ def get_influxdb_config():
     
     # Get InfluxDB config with explicit debugging
     url = get_config("connections.influxdb.url", os.environ.get("INFLUXDB_URL", "http://localhost:8086"))
-    token = get_config("connections.influxdb.token", os.environ.get("INFLUXDB_TOKEN", "stockscantoken"))
-    org = get_config("connections.influxdb.org", os.environ.get("INFLUXDB_ORG", "stockscan"))
+    token = get_config("connections.influxdb.token", os.environ.get("INFLUXDB_TOKEN", "marketsagetoken"))
+    org = get_config("connections.influxdb.org", os.environ.get("INFLUXDB_ORG", "marketsage"))
     bucket = get_config("connections.influxdb.bucket", os.environ.get("INFLUXDB_BUCKET", "stock_data"))
     
     print(f"InfluxDB config from get_config: url={url}, org={org}, bucket={bucket}")

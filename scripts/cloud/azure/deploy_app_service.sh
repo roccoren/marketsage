@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script to deploy the StockScan Dash application to Azure App Service
+# Script to deploy the MarketSage Dash application to Azure App Service
 # This script assumes middleware services (InfluxDB, MLflow) are already available
 
 set -e
@@ -21,21 +21,21 @@ if ! az account show &> /dev/null; then
 fi
 
 # Configuration variables - modify these as needed
-RESOURCE_GROUP="stockscan-rg"
+RESOURCE_GROUP="marketsage-rg"
 LOCATION="eastus"
-APP_SERVICE_PLAN="stockscan-plan"
-APP_NAME="stockscan-dash"
+APP_SERVICE_PLAN="marketsage-plan"
+APP_NAME="marketsage-dash"
 SKU="B1"
 
 # External middleware connection settings - update these with your actual endpoints
 INFLUXDB_URL="https://your-influxdb-endpoint:8086"
 INFLUXDB_TOKEN="your-influxdb-token"
-INFLUXDB_ORG="stockscan"
+INFLUXDB_ORG="marketsage"
 INFLUXDB_BUCKET="stock_data"
 MLFLOW_TRACKING_URI="https://your-mlflow-endpoint:5000"
 
 # Ask for confirmation
-echo "This script will deploy the StockScan Dash application to Azure App Service with the following configuration:"
+echo "This script will deploy the MarketSage Dash application to Azure App Service with the following configuration:"
 echo "Resource Group: $RESOURCE_GROUP"
 echo "Location: $LOCATION"
 echo "App Service Plan: $APP_SERVICE_PLAN"

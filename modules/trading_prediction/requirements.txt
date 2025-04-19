@@ -1,0 +1,35 @@
+# Core dependencies
+numpy>=1.19.0
+pandas>=1.1.0
+matplotlib>=3.3.0
+seaborn>=0.11.0
+scikit-learn>=0.23.0
+tqdm>=4.47.0
+
+# Technical analysis
+# TA-Lib requires separate installation, see README for instructions
+# TA-Lib>=0.4.0
+pandas-ta  # Alternative to talib that doesn't require compilation
+
+# Deep learning frameworks (choose one or both)
+# TensorFlow
+tensorflow>=2.4.0
+# PyTorch
+torch>=1.7.0
+torchvision>=0.8.0
+
+# Data acquisition
+yfinance>=0.1.63  # Yahoo Finance API
+requests>=2.25.0
+python-dateutil>=2.8.1
+pytz>=2020.1
+
+# Time series specific
+statsmodels>=0.12.0  # For time series analysis
+holidays>=0.10.0  # For market calendars
+
+# Optional: For hyperparameter optimization
+optuna>=2.3.0
+
+# Optional: For model interpretability
+shap>=0.37.0

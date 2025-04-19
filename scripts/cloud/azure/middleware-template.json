@@ -4,21 +4,21 @@
   "parameters": {
     "influxdbContainerName": {
       "type": "string",
-      "defaultValue": "stockscan-influxdb",
+      "defaultValue": "marketsage-influxdb",
       "metadata": {
         "description": "Name for the InfluxDB container instance"
       }
     },
     "mlflowContainerName": {
       "type": "string",
-      "defaultValue": "stockscan-mlflow",
+      "defaultValue": "marketsage-mlflow",
       "metadata": {
         "description": "Name for the MLflow container instance"
       }
     },
     "postgresServerName": {
       "type": "string",
-      "defaultValue": "stockscan-postgres",
+      "defaultValue": "marketsage-postgres",
       "metadata": {
         "description": "Name for the PostgreSQL server"
       }
@@ -38,7 +38,7 @@
     },
     "influxdbAdminToken": {
       "type": "securestring",
-      "defaultValue": "stockscantoken",
+      "defaultValue": "marketsagetoken",
       "metadata": {
         "description": "Admin token for InfluxDB"
       }
@@ -52,11 +52,11 @@
     }
   },
   "variables": {
-    "containerGroupName": "stockscan-middleware",
+    "containerGroupName": "marketsage-middleware",
     "postgresDbName": "mlflow",
-    "vnetName": "stockscan-vnet",
+    "vnetName": "marketsage-vnet",
     "subnetName": "middleware-subnet",
-    "storageAccountName": "[concat('stockscan', uniqueString(resourceGroup().id))]"
+    "storageAccountName": "[concat('marketsage', uniqueString(resourceGroup().id))]"
   },
   "resources": [
     {
@@ -189,7 +189,7 @@
                 },
                 {
                   "name": "DOCKER_INFLUXDB_INIT_ORG",
-                  "value": "stockscan"
+                  "value": "marketsage"
                 },
                 {
                   "name": "DOCKER_INFLUXDB_INIT_BUCKET",

@@ -21,8 +21,8 @@ class MockInfluxDBStorage:
     """Mock implementation of InfluxDB storage backend for testing."""
     
     def __init__(self, url: str = "mock://localhost:8086", 
-                 token: str = "mock-token", 
-                 org: str = "stockscan",
+                 token: str = "mock-token",
+                 org: str = "marketsage",
                  bucket: str = "stock_data"):
         """Initialize mock InfluxDB storage."""
         self.url = url

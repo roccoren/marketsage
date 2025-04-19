@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.dash
-    container_name: stockscan-dash
+    container_name: marketsage-dash
     ports:
       - "8050:8050"
     volumes:

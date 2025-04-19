@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script to deploy the StockScan Dash application to Azure Container Apps
+# Script to deploy the MarketSage Dash application to Azure Container Apps
 
 set -e
 
@@ -26,23 +26,23 @@ if ! az account show &> /dev/null; then
 fi
 
 # Configuration variables - modify these as needed
-RESOURCE_GROUP="stockscan-rg"
+RESOURCE_GROUP="marketsage-rg"
 LOCATION="eastus"
-CONTAINER_APP_ENV="stockscan-env"
-CONTAINER_APP_NAME="stockscan-dash"
-REGISTRY_NAME="stockscanregistry"
-IMAGE_NAME="stockscan-dash"
+CONTAINER_APP_ENV="marketsage-env"
+CONTAINER_APP_NAME="marketsage-dash"
+REGISTRY_NAME="marketsageregistry"
+IMAGE_NAME="marketsage-dash"
 IMAGE_TAG="latest"
 
 # External middleware connection settings - update these with your actual endpoints
 INFLUXDB_URL="https://your-influxdb-endpoint:8086"
 INFLUXDB_TOKEN="your-influxdb-token"
-INFLUXDB_ORG="stockscan"
+INFLUXDB_ORG="marketsage"
 INFLUXDB_BUCKET="stock_data"
 MLFLOW_TRACKING_URI="https://your-mlflow-endpoint:5000"
 
 # Ask for confirmation
-echo "This script will deploy the StockScan Dash application to Azure Container Apps with the following configuration:"
+echo "This script will deploy the MarketSage Dash application to Azure Container Apps with the following configuration:"
 echo "Resource Group: $RESOURCE_GROUP"
 echo "Location: $LOCATION"
 echo "Container App Environment: $CONTAINER_APP_ENV"

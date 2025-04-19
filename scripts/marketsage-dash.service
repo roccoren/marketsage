@@ -1,0 +1,17 @@
+[Unit]
+Description=MarketSage Dash Application
+After=network.target
+
+[Service]
+User=marketsage
+WorkingDirectory=/path/to/marketsage
+ExecStart=/path/to/marketsage/venv/bin/python /path/to/marketsage/dash_app.py
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=marketsage-dash
+Environment="CONFIG_FILE=/path/to/marketsage/config/default_config.yaml"
+
+[Install]
+WantedBy=multi-user.target

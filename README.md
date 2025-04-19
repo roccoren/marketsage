@@ -120,8 +120,8 @@ connections:
   # InfluxDB configuration
   influxdb:
     url: http://localhost:8086
-    token: stockscantoken
-    org: stockscan
+    token: marketsagetoken
+    org: marketsage
     bucket: stock_data
   
   # MLflow configuration

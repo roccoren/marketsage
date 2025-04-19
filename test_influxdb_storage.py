@@ -230,8 +230,8 @@ def main():
     storage_manager = StorageManager(
         backend_type="influxdb",
         url=os.environ.get("INFLUXDB_URL", "http://localhost:8086"),
-        token=os.environ.get("INFLUXDB_TOKEN", "stockscantoken"),
-        org=os.environ.get("INFLUXDB_ORG", "stockscan"),
+        token=os.environ.get("INFLUXDB_TOKEN", "marketsagetoken"),
+        org=os.environ.get("INFLUXDB_ORG", "marketsage"),
         bucket=os.environ.get("INFLUXDB_BUCKET", "stock_data")
     )
     

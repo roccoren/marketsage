@@ -234,7 +234,7 @@ def main():
         backend_type="influxdb",
         url="mock://localhost:8086",
         token="mock-token",
-        org="stockscan",
+        org="marketsage",
         bucket="stock_data"
     )
     

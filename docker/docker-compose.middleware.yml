@@ -39,7 +39,7 @@ services:
 
   influxdb:
     image: influxdb:2.0
-    container_name: stockscan-influxdb
+    container_name: marketsage-influxdb
     ports:
       - "8086:8086"
     volumes:
@@ -47,10 +47,10 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=stockscanadmin
-      - DOCKER_INFLUXDB_INIT_ORG=stockscan
+      - DOCKER_INFLUXDB_INIT_PASSWORD=marketsageadmin
+      - DOCKER_INFLUXDB_INIT_ORG=marketsage
       - DOCKER_INFLUXDB_INIT_BUCKET=stock_data
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=stockscantoken
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=marketsagetoken
     restart: unless-stopped
     networks:
       - middleware-network

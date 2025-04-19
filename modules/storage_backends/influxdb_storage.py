@@ -75,7 +75,7 @@ class InfluxDBStorage(StorageBackend):
             # Connection error, use mock client
             print(f"Error initializing InfluxDB connection: {e}")
             print("Using mock InfluxDB client instead")
-            self.client = MockInfluxDBClient(url="http://localhost:8086", token="mock", org="mock")
+            self.client = MockInfluxDBClient(url="http://localhost:8086", token="mock", org="marketsage")
             self.is_mock = True
             
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)

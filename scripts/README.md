@@ -1,6 +1,6 @@
-# StockScan Deployment Scripts
+# MarketSage Deployment Scripts
 
-This directory contains scripts for deploying the StockScan application in various environments. The scripts are organized by deployment type and target environment.
+This directory contains scripts for deploying the MarketSage application in various environments. The scripts are organized by deployment type and target environment.
 
 ## Local Deployment
 
@@ -25,7 +25,7 @@ This directory contains scripts for deploying the StockScan application in vario
 
 ### Systemd Service Deployment
 
-- **stockscan-dash.service**: Systemd service file for running the Dash application as a service on Linux.
+- **marketsage-dash.service**: Systemd service file for running the Dash application as a service on Linux.
 - **install_systemd_service.sh**: Installs the Dash application as a systemd service on Linux.
   ```bash
   sudo ./scripts/install_systemd_service.sh

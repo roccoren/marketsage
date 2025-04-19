@@ -102,15 +102,15 @@ flowchart TD
    docker run -d -p 8086:8086 \
      -e DOCKER_INFLUXDB_INIT_MODE=setup \
      -e DOCKER_INFLUXDB_INIT_USERNAME=admin \
-     -e DOCKER_INFLUXDB_INIT_PASSWORD=stockscanadmin \
-     -e DOCKER_INFLUXDB_INIT_ORG=stockscan \
+     -e DOCKER_INFLUXDB_INIT_PASSWORD=marketsageadmin \
+     -e DOCKER_INFLUXDB_INIT_ORG=marketsage \
      -e DOCKER_INFLUXDB_INIT_BUCKET=stock_data \
-     -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=stockscantoken \
+     -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=marketsagetoken \
      --name influxdb influxdb:2.0
    ```
 
 2. Configure database settings:
-   - Organization: `stockscan`
+   - Organization: `marketsage`
    - Bucket: `stock_data`
    - Retention policy: `forever` (no expiration for historical data)
 
@@ -200,7 +200,7 @@ version: '3'
 services:
   influxdb:
     image: influxdb:2.0
-    container_name: stockscan-influxdb
+    container_name: marketsage-influxdb
     ports:
       - "8086:8086"
     volumes:
@@ -208,23 +208,23 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=stockscanadmin
-      - DOCKER_INFLUXDB_INIT_ORG=stockscan
+      - DOCKER_INFLUXDB_INIT_PASSWORD=marketsageadmin
+      - DOCKER_INFLUXDB_INIT_ORG=marketsage
       - DOCKER_INFLUXDB_INIT_BUCKET=stock_data
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=stockscantoken
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=marketsagetoken
     restart: unless-stopped
 
   dash:
     build:
       context: .
       dockerfile: Dockerfile.dash
-    container_name: stockscan-dash
+    container_name: marketsage-dash
     ports:
       - "8050:8050"
     environment:
       - INFLUXDB_URL=http://influxdb:8086
-      - INFLUXDB_TOKEN=stockscantoken
-      - INFLUXDB_ORG=stockscan
+      - INFLUXDB_TOKEN=marketsagetoken
+      - INFLUXDB_ORG=marketsage
       - INFLUXDB_BUCKET=stock_data
     depends_on:
       - influxdb
@@ -307,21 +307,21 @@ gunicorn
    docker run -d -p 8086:8086 \
      -e DOCKER_INFLUXDB_INIT_MODE=setup \
      -e DOCKER_INFLUXDB_INIT_USERNAME=admin \
-     -e DOCKER_INFLUXDB_INIT_PASSWORD=stockscanadmin \
-     -e DOCKER_INFLUXDB_INIT_ORG=stockscan \
+     -e DOCKER_INFLUXDB_INIT_PASSWORD=marketsageadmin \
+     -e DOCKER_INFLUXDB_INIT_ORG=marketsage \
      -e DOCKER_INFLUXDB_INIT_BUCKET=stock_data \
-     -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=stockscantoken \
+     -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=marketsagetoken \
      --name influxdb influxdb:2.0
    ```
 
 7. **Migrate Data**:
    ```bash
-   python migrate_to_influxdb.py --source-backend csv --influxdb-token stockscantoken
+   python migrate_to_influxdb.py --source-backend csv --influxdb-token marketsagetoken
    ```
 
 8. **Run Dash Application**:
    ```bash
-   INFLUXDB_TOKEN=stockscantoken python dash_app.py
+   INFLUXDB_TOKEN=marketsagetoken python dash_app.py
    ```
 
 ## Phased Implementation Approach

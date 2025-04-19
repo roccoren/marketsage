@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script to deploy the StockScan Dash application to Azure App Service
+# Script to deploy the MarketSage Dash application to Azure App Service
 
 set -e
 
@@ -20,17 +20,17 @@ if ! az account show &> /dev/null; then
 fi
 
 # Configuration variables - modify these as needed
-RESOURCE_GROUP="stockscan-rg"
+RESOURCE_GROUP="marketsage-rg"
 LOCATION="eastus"
-APP_SERVICE_PLAN="stockscan-plan"
-APP_NAME="stockscan-dash"
+APP_SERVICE_PLAN="marketsage-plan"
+APP_NAME="marketsage-dash"
 SKU="B1"
-REGISTRY_NAME="stockscanregistry"
-IMAGE_NAME="stockscan-dash"
+REGISTRY_NAME="marketsageregistry"
+IMAGE_NAME="marketsage-dash"
 IMAGE_TAG="latest"
 
 # Ask for confirmation
-echo "This script will deploy the StockScan Dash application to Azure App Service with the following configuration:"
+echo "This script will deploy the MarketSage Dash application to Azure App Service with the following configuration:"
 echo "Resource Group: $RESOURCE_GROUP"
 echo "Location: $LOCATION"
 echo "App Service Plan: $APP_SERVICE_PLAN"
@@ -79,7 +79,7 @@ az webapp config appsettings set --resource-group $RESOURCE_GROUP --name $APP_NA
     CONFIG_FILE=/app/config/default_config.yaml \
     INFLUXDB_URL="https://your-influxdb-instance.azurewebsites.net:8086" \
     INFLUXDB_TOKEN="your-influxdb-token" \
-    INFLUXDB_ORG="stockscan" \
+    INFLUXDB_ORG="marketsage" \
     INFLUXDB_BUCKET="stock_data" \
     MLFLOW_TRACKING_URI="https://your-mlflow-instance.azurewebsites.net"
 

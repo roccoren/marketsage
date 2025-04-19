@@ -17,8 +17,8 @@ connections:
   # InfluxDB configuration
   influxdb:
     url: http://localhost:8086
-    token: stockscantoken
-    org: stockscan
+    token: marketsagetoken
+    org: marketsage
     bucket: stock_data
   
   # MLflow configuration
@@ -39,8 +39,8 @@ def get_influxdb_config():
     """Get InfluxDB connection configuration."""
     return {
         "url": get_config("connections.influxdb.url", "http://localhost:8086"),
-        "token": get_config("connections.influxdb.token", "stockscantoken"),
-        "org": get_config("connections.influxdb.org", "stockscan"),
+        "token": get_config("connections.influxdb.token", "marketsagetoken"),
+        "org": get_config("connections.influxdb.org", "marketsage"),
         "bucket": get_config("connections.influxdb.bucket", "stock_data")
     }
 
@@ -110,7 +110,7 @@ services:
 
   influxdb:
     image: influxdb:2.0
-    container_name: stockscan-influxdb
+    container_name: marketsage-influxdb
     ports:
       - "8086:8086"
     volumes:
@@ -118,10 +118,10 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=stockscanadmin
-      - DOCKER_INFLUXDB_INIT_ORG=stockscan
+      - DOCKER_INFLUXDB_INIT_PASSWORD=marketsageadmin
+      - DOCKER_INFLUXDB_INIT_ORG=marketsage
       - DOCKER_INFLUXDB_INIT_BUCKET=stock_data
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=stockscantoken
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=marketsagetoken
     restart: unless-stopped
     networks:
       - middleware-network
@@ -149,7 +149,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.dash
-    container_name: stockscan-dash
+    container_name: marketsage-dash
     ports:
       - "8050:8050"
     volumes:
@@ -202,22 +202,22 @@ python dash_app.py
 
 Create a systemd service file for Linux deployment:
 
-`scripts/stockscan-dash.service`:
+`scripts/marketsage-dash.service`:
 ```ini
 [Unit]
-Description=StockScan Dash Application
+Description=MarketSage Dash Application
 After=network.target
 
 [Service]
-User=stockscan
-WorkingDirectory=/path/to/stockscan
-ExecStart=/usr/bin/python3 /path/to/stockscan/dash_app.py
+User=marketsage
+WorkingDirectory=/path/to/marketsage
+ExecStart=/usr/bin/python3 /path/to/marketsage/dash_app.py
 Restart=always
 RestartSec=10
 StandardOutput=syslog
 StandardError=syslog
-SyslogIdentifier=stockscan-dash
-Environment="CONFIG_FILE=/path/to/stockscan/config/default_config.yaml"
+SyslogIdentifier=marketsage-dash
+Environment="CONFIG_FILE=/path/to/marketsage/config/default_config.yaml"
 
 [Install]
 WantedBy=multi-user.target
@@ -243,10 +243,10 @@ option_settings:
 #!/bin/bash
 
 # Initialize Elastic Beanstalk application
-eb init -p python-3.8 stockscan-dash
+eb init -p python-3.8 marketsage-dash
 
 # Create environment and deploy
-eb create stockscan-dash-env
+eb create marketsage-dash-env
 ```
 
 #### 3.4.2. Google Cloud Run Deployment
@@ -275,8 +275,8 @@ CMD exec gunicorn --bind :$PORT dash_app:server
 #!/bin/bash
 
 # Build and deploy to Google Cloud Run
-gcloud builds submit --tag gcr.io/PROJECT_ID/stockscan-dash
-gcloud run deploy stockscan-dash --image gcr.io/PROJECT_ID/stockscan-dash --platform managed
+gcloud builds submit --tag gcr.io/PROJECT_ID/marketsage-dash
+gcloud run deploy marketsage-dash --image gcr.io/PROJECT_ID/marketsage-dash --platform managed
 ```
 
 ## Implementation Flow Diagram
