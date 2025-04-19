@@ -454,3 +454,57 @@ def prepare_dataset(features: pd.DataFrame, prices: pd.DataFrame = None,
         'X_test': X_test,
         'y_test': y_test
     }
+
+
+def prepare_sequence(data: pd.DataFrame, sequence_length: int = 60, include_target: bool = True) -> Optional[np.ndarray]:
+    """
+    Prepare a sequence for prediction.
+    
+    Args:
+        data: DataFrame with features
+        sequence_length: Number of time steps in each sequence
+        include_target: Whether to include target column (for training)
+        
+    Returns:
+        Numpy array with sequences or None if not enough data
+    """
+    logger.info(f"[DEBUG] Preparing sequence with data shape: {data.shape}")
+    logger.info(f"[DEBUG] Sequence length: {sequence_length}, include_target: {include_target}")
+    
+    if data is None or data.empty:
+        logger.error("[DEBUG] Empty data provided to prepare_sequence")
+        return None
+    
+    # Check if we have enough data
+    if len(data) < sequence_length:
+        logger.error(f"[DEBUG] Not enough data points: {len(data)} < {sequence_length}")
+        return None
+    
+    # Check for NaN values
+    nan_counts = data.isna().sum()
+    if nan_counts.sum() > 0:
+        logger.warning(f"[DEBUG] Data has NaN values: {nan_counts.to_dict()}")
+        logger.warning(f"[DEBUG] Filling NaN values with forward fill method")
+        data = data.fillna(method='ffill').fillna(method='bfill')
+    
+    # Create sequences
+    X = []
+    
+    # For prediction, we only need the last sequence
+    if not include_target:
+        # Use the last sequence_length rows
+        if len(data) >= sequence_length:
+            seq = data.iloc[-sequence_length:].values
+            X.append(seq)
+            logger.info(f"[DEBUG] Created 1 sequence for prediction with shape: {seq.shape}")
+        else:
+            logger.error(f"[DEBUG] Not enough data for prediction sequence: {len(data)} < {sequence_length}")
+            return None
+    else:
+        # For training, create sequences with sliding window
+        for i in range(0, len(data) - sequence_length + 1):
+            seq = data.iloc[i:i+sequence_length].values
+            X.append(seq)
+        logger.info(f"[DEBUG] Created {len(X)} sequences with shape: {X[0].shape if X else 'None'}")
+    
+    return np.array(X)

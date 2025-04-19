@@ -62,35 +62,90 @@ logger = logging.getLogger(__name__)
 def fetch_incremental_stock_data(storage_manager, symbol, start_date, end_date):
     """Fetch only missing historical data for a symbol and save merged result."""
     # Load existing data
+    logger.info(f"[DEBUG] Fetching incremental data for {symbol} from {start_date} to {end_date}")
     existing = storage_manager.load_data(symbol)
     if not existing.empty:
+        logger.info(f"[DEBUG] Found existing data for {symbol}: {len(existing)} rows, index type: {type(existing.index)}")
+        logger.info(f"[DEBUG] Existing data index range: {existing.index.min()} to {existing.index.max()}")
+        logger.info(f"[DEBUG] Existing data has timezone info: {existing.index.tz is not None}")
+        
         # Ensure all dates are tz-naive for comparison
         idx = existing.index
         if hasattr(idx, 'tz_convert') and idx.tz is not None:
-            idx = idx.tz_convert(None)
+            logger.info(f"[DEBUG] Converting timezone-aware index to naive for {symbol}")
+            # Create a new DatetimeIndex with timezone info removed
+            idx = pd.DatetimeIndex([dt.replace(tzinfo=None) for dt in idx])
+            # Update the DataFrame's index with the timezone-naive index
+            existing = pd.DataFrame(existing.values, index=idx, columns=existing.columns)
+            logger.info(f"[DEBUG] After conversion, index has timezone info: {existing.index.tz is not None}")
         idx = pd.to_datetime(idx).normalize()
         min_saved = idx.min()
         max_saved = idx.max()
         start_dt = pd.to_datetime(start_date)
         end_dt = pd.to_datetime(end_date)
+        
+        logger.info(f"[DEBUG] Normalized index range: {min_saved} to {max_saved}")
+        logger.info(f"[DEBUG] Requested date range: {start_dt} to {end_dt}")
+        
         fetch_ranges = []
         if start_dt < min_saved:
             fetch_ranges.append((start_date, (min_saved - pd.Timedelta(days=1)).strftime('%Y-%m-%d')))
+            logger.info(f"[DEBUG] Need to fetch earlier data: {start_date} to {(min_saved - pd.Timedelta(days=1)).strftime('%Y-%m-%d')}")
         if end_dt > max_saved:
             fetch_ranges.append(((max_saved + pd.Timedelta(days=1)).strftime('%Y-%m-%d'), end_date))
+            logger.info(f"[DEBUG] Need to fetch newer data: {(max_saved + pd.Timedelta(days=1)).strftime('%Y-%m-%d')} to {end_date}")
+        
         new_data = []
         for rng in fetch_ranges:
+            logger.info(f"[DEBUG] Fetching range: {rng[0]} to {rng[1]}")
             df = fetch_stock_data(symbol, rng[0], rng[1])
             if df is not None and not df.empty:
+                logger.info(f"[DEBUG] Fetched {len(df)} rows for range {rng[0]} to {rng[1]}")
+                logger.info(f"[DEBUG] Fetched data index type: {type(df.index)}, has timezone: {df.index.tz is not None}")
                 new_data.append(df)
+            else:
+                logger.warning(f"[DEBUG] No data fetched for range {rng[0]} to {rng[1]}")
+        
         if new_data:
             try:
+                logger.info(f"[DEBUG] Merging {len(existing)} existing rows with {sum(len(df) for df in new_data)} new rows")
+                
+                # Check for index types and timezone info before merging
+                for i, df in enumerate(new_data):
+                    logger.info(f"[DEBUG] New data chunk {i+1} index type: {type(df.index)}, has timezone: {df.index.tz is not None}")
+                    logger.info(f"[DEBUG] New data chunk {i+1} index range: {df.index.min()} to {df.index.max()}")
+                
+                # Ensure all DataFrames have timezone-naive indices before concatenation
+                for i, df in enumerate(new_data):
+                    if df.index.tz is not None:
+                        logger.info(f"[DEBUG] Converting new data chunk {i+1} to timezone-naive")
+                        naive_idx = pd.DatetimeIndex([dt.replace(tzinfo=None) for dt in df.index])
+                        new_data[i] = pd.DataFrame(df.values, index=naive_idx, columns=df.columns)
+                        logger.info(f"[DEBUG] After conversion, chunk {i+1} has timezone info: {new_data[i].index.tz is not None}")
+                
+                # Double-check existing data is timezone-naive before concat
+                if existing.index.tz is not None:
+                    logger.warning(f"[DEBUG] Existing data still has timezone info before concat, forcing conversion")
+                    naive_idx = pd.DatetimeIndex([dt.replace(tzinfo=None) for dt in existing.index])
+                    existing = pd.DataFrame(existing.values, index=naive_idx, columns=existing.columns)
+                
                 all_data = pd.concat([existing] + new_data)
+                logger.info(f"[DEBUG] After concat: {len(all_data)} rows (before normalization and deduplication)")
+                
+                # Normalize all indices to ensure consistency
                 all_data.index = pd.to_datetime(all_data.index).normalize()
+                logger.info(f"[DEBUG] After normalization: {len(all_data)} rows")
+                
                 # Handle duplicate indices more carefully
                 if all_data.index.duplicated().any():
+                    dup_count = all_data.index.duplicated().sum()
+                    logger.info(f"[DEBUG] Found {dup_count} duplicate indices, removing duplicates")
                     all_data = all_data[~all_data.index.duplicated(keep='last')]
+                    logger.info(f"[DEBUG] After deduplication: {len(all_data)} rows")
+                
                 all_data = all_data.sort_index()
+                logger.info(f"[DEBUG] Final merged data: {len(all_data)} rows, index range: {all_data.index.min()} to {all_data.index.max()}")
+                
                 storage_manager.save_data(symbol, all_data)
                 return all_data
             except Exception as e:
@@ -100,12 +155,17 @@ def fetch_incremental_stock_data(storage_manager, symbol, start_date, end_date):
                     return new_data[-1]
                 return existing
         else:
+            logger.info(f"[DEBUG] No new data to merge, returning existing data ({len(existing)} rows)")
             return existing
     else:
         # No data saved, fetch all
+        logger.info(f"[DEBUG] No existing data for {symbol}, fetching all data from {start_date} to {end_date}")
         df = fetch_stock_data(symbol, start_date, end_date)
         if df is not None and not df.empty:
+            logger.info(f"[DEBUG] Fetched {len(df)} rows of new data, saving to storage")
             storage_manager.save_data(symbol, df)
+        else:
+            logger.warning(f"[DEBUG] Failed to fetch any data for {symbol}")
         return df
 
 
@@ -459,6 +519,8 @@ def fetch_stock_data(symbol: str, start_date: str, end_date: str) -> pd.DataFram
         random.seed(RANDOM_SEED)
         np.random.seed(RANDOM_SEED)
         
+        logger.info(f"[DEBUG] Fetching stock data for {symbol} from {start_date} to {end_date}")
+        
         # Use direct download instead of Ticker.history
         data = yf.download(symbol, start=start_date, end=end_date, progress=False)
         
@@ -466,8 +528,14 @@ def fetch_stock_data(symbol: str, start_date: str, end_date: str) -> pd.DataFram
             logger.error(f"No data found for {symbol}")
             return None
         
+        logger.info(f"[DEBUG] Downloaded {len(data)} rows for {symbol}, index type: {type(data.index)}")
+        logger.info(f"[DEBUG] Downloaded data has timezone info: {data.index.tz is not None}")
+        if len(data) > 0:
+            logger.info(f"[DEBUG] Downloaded data index range: {data.index.min()} to {data.index.max()}")
+        
         # Handle multi-level column format if present
         if isinstance(data.columns, pd.MultiIndex):
+            logger.info(f"[DEBUG] Converting multi-level columns to standard format for {symbol}")
             # Convert multi-level columns to standard format
             data = data.copy()
             data.columns = [col[0] for col in data.columns]
@@ -481,11 +549,29 @@ def fetch_stock_data(symbol: str, start_date: str, end_date: str) -> pd.DataFram
             
         # Ensure index is tz-naive
         if hasattr(data.index, "tz_convert") and data.index.tz is not None:
-            data.index = data.index.tz_convert(None)
+            logger.info(f"[DEBUG] Converting timezone-aware index to naive for {symbol}")
+            # Create a new DatetimeIndex with timezone info removed
+            naive_idx = pd.DatetimeIndex([dt.replace(tzinfo=None) for dt in data.index])
+            data = pd.DataFrame(data.values, index=naive_idx, columns=data.columns)
+            logger.info(f"[DEBUG] After conversion, index has timezone info: {data.index.tz is not None}")
+        
+        # Normalize index to midnight
+        original_length = len(data)
         data.index = pd.to_datetime(data.index).normalize()
+        
+        # Check if normalization caused duplicates
+        if len(data) != original_length:
+            logger.warning(f"[DEBUG] Normalization changed row count from {original_length} to {len(data)} for {symbol}")
         
         # Sort data by index to ensure consistent order
         data = data.sort_index()
+        
+        # Check for duplicates after normalization
+        if data.index.duplicated().any():
+            dup_count = data.index.duplicated().sum()
+            logger.warning(f"[DEBUG] Found {dup_count} duplicate indices after normalization for {symbol}")
+            logger.info(f"[DEBUG] Removing duplicates, keeping last occurrence")
+            data = data[~data.index.duplicated(keep='last')]
         
         # Round values to 6 decimal places to reduce floating point variability
         for col in data.columns:
@@ -765,11 +851,26 @@ def main():
                     # Import the trading prediction integration module
                     from modules.trading_prediction.integration import get_trading_prediction
                     
+                    # Log data shape and properties before passing to LSTM model
+                    logger.info(f"[DEBUG] LSTM input data for {symbol}: {len(data)} rows, columns: {data.columns.tolist()}")
+                    logger.info(f"[DEBUG] LSTM input data index type: {type(data.index)}, has timezone: {data.index.tz is not None}")
+                    logger.info(f"[DEBUG] LSTM input data index range: {data.index.min()} to {data.index.max()}")
+                    logger.info(f"[DEBUG] LSTM input data has duplicated indices: {data.index.duplicated().any()}")
+                    
+                    # Check for NaN values
+                    nan_counts = data.isna().sum()
+                    if nan_counts.sum() > 0:
+                        logger.warning(f"[DEBUG] LSTM input data has NaN values: {nan_counts.to_dict()}")
+                    
                     # Generate forecast using the LSTM model
+                    logger.info(f"[DEBUG] Calling get_trading_prediction for {symbol}")
                     forecast_result = get_trading_prediction(symbol, data)
                     logger.info(f"[LSTMModel] {symbol}: {forecast_result['overall_action']} | Expected change: {forecast_result['forecast_change_percent']:.2f}%")
                 except Exception as e:
                     logger.error(f"[LSTMModel] Error for {symbol}: {e}")
+                    logger.error(f"[DEBUG] LSTM model exception details: {type(e).__name__}: {str(e)}")
+                    import traceback
+                    logger.error(f"[DEBUG] LSTM model traceback: {traceback.format_exc()}")
                     forecast_result = None
             else:
                 # Use original technical indicator-based prediction

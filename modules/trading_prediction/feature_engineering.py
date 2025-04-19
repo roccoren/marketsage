@@ -107,28 +107,49 @@ class BaseFeatureEngineer(FeatureEngineer):
         Returns:
             DataFrame with engineered features
         """
+        logger.info(f"[DEBUG] Creating features from data with shape: {data.shape if data is not None else 'None'}")
+        
         if data is None or data.empty:
-            logger.warning("Empty data provided to feature engineering")
+            logger.warning("[DEBUG] Empty data provided to feature engineering")
             return pd.DataFrame()
+        
+        # Log data properties
+        logger.info(f"[DEBUG] Data columns: {data.columns.tolist()}")
+        logger.info(f"[DEBUG] Data index type: {type(data.index)}")
+        logger.info(f"[DEBUG] Data index range: {data.index.min()} to {data.index.max()}")
+        logger.info(f"[DEBUG] Data has duplicated indices: {data.index.duplicated().any()}")
+        
+        # Check for NaN values
+        nan_counts = data.isna().sum()
+        if nan_counts.sum() > 0:
+            logger.warning(f"[DEBUG] Input data has NaN values: {nan_counts.to_dict()}")
         
         # Create a copy to avoid modifying the original data
         df = data.copy()
         
         # Ensure we have the required columns
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        missing_columns = []
         for col in required_columns:
             if col not in df.columns:
-                logger.error(f"Required column {col} missing from data")
-                return pd.DataFrame()
+                missing_columns.append(col)
+                logger.error(f"[DEBUG] Required column {col} missing from data")
+        
+        if missing_columns:
+            logger.error(f"[DEBUG] Missing required columns: {missing_columns}")
+            return pd.DataFrame()
         
         # Calculate returns first as many features depend on it
+        logger.info("[DEBUG] Calculating returns")
         df['returns'] = df['Close'].pct_change()
         
         # Apply each feature function
         features = pd.DataFrame(index=df.index)
+        logger.info(f"[DEBUG] Applying {len(self._feature_functions)} feature functions")
         
         for name, func in self._feature_functions.items():
             try:
+                logger.info(f"[DEBUG] Calculating feature: {name}")
                 feature_df = func(df)
                 
                 # If the function returns a DataFrame, merge it
@@ -142,12 +163,24 @@ class BaseFeatureEngineer(FeatureEngineer):
                     features[name] = feature_df
                 # Otherwise, skip it
                 else:
-                    logger.warning(f"Feature function {name} returned an invalid type: {type(feature_df)}")
+                    logger.warning(f"[DEBUG] Feature function {name} returned an invalid type: {type(feature_df)}")
             except Exception as e:
-                logger.error(f"Error calculating feature {name}: {e}")
+                logger.error(f"[DEBUG] Error calculating feature {name}: {e}")
+                import traceback
+                logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
+        
+        logger.info(f"[DEBUG] Created {features.shape[1]} features before NaN removal")
+        
+        # Check for NaN values in features
+        feature_nan_counts = features.isna().sum()
+        if feature_nan_counts.sum() > 0:
+            logger.warning(f"[DEBUG] Features have NaN values: {feature_nan_counts.to_dict()}")
         
         # Drop rows with NaN values (typically at the beginning due to lookback periods)
+        original_rows = len(features)
         features = features.dropna()
+        dropped_rows = original_rows - len(features)
+        logger.info(f"[DEBUG] Dropped {dropped_rows} rows with NaN values, {len(features)} rows remaining")
         
         return features
     
@@ -444,5 +477,25 @@ class FeatureNormalizer:
         Returns:
             DataFrame with normalized features
         """
+        logger.info(f"[DEBUG] Normalizing features with shape: {features.shape}")
+        logger.info(f"[DEBUG] Using normalization method: {self.method}")
+        
+        # Check for NaN values before normalization
+        nan_counts = features.isna().sum()
+        if nan_counts.sum() > 0:
+            logger.warning(f"[DEBUG] Features have NaN values before normalization: {nan_counts.to_dict()}")
+            logger.warning(f"[DEBUG] Filling NaN values before normalization")
+            features = features.fillna(method='ffill').fillna(method='bfill')
+        
         self.fit(features)
-        return self.transform(features)
+        normalized = self.transform(features)
+        
+        # Check for NaN values after normalization
+        norm_nan_counts = normalized.isna().sum()
+        if norm_nan_counts.sum() > 0:
+            logger.warning(f"[DEBUG] Normalized features have NaN values: {norm_nan_counts.to_dict()}")
+            logger.warning(f"[DEBUG] Filling NaN values after normalization")
+            normalized = normalized.fillna(0)  # Fill remaining NaNs with 0
+        
+        logger.info(f"[DEBUG] Normalization completed, output shape: {normalized.shape}")
+        return normalized
