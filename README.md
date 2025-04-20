@@ -1,248 +1,144 @@
-# MarketSage
+# StockScan API
 
-A comprehensive quantitative analysis workflow based on Microsoft Qlib, providing advanced features for stock data acquisition, forecasting, backtesting, and visualization.
+A modern RESTful API for stock data analysis, predictions, and portfolio management, built on top of the existing StockScan functionality.
 
 ## Features
 
-- **Data Acquisition**: Fetch historical stock data from Yahoo Finance with retry mechanisms and error handling.
-- **Storage Abstraction**: Unified storage interface with multiple backends:
-  - CSV storage for simple file-based storage
-  - SQLite storage for relational database storage
-  - InfluxDB storage for time-series data
-  - Mock InfluxDB for testing
-- **Forecasting Models**: Hybrid forecasting approach with multiple models:
-  - Linear regression models
-  - Random forest models
-  - Ensemble models with weighted combinations
-  - Parameter optimization for model tuning
-- **Backtesting**: Sophisticated backtesting framework with:
-  - Multiple trading strategies (momentum, mean reversion, forecast-based)
-  - Strategy parameter optimization
-  - Performance metrics (returns, Sharpe ratio, drawdown)
-- **Technical Indicators**: Comprehensive set of technical indicators:
-  - Moving averages (SMA, EMA)
-  - Relative Strength Index (RSI)
-  - Bollinger Bands
-  - MACD
-  - Stochastic Oscillator
-  - Average True Range (ATR)
-  - On-Balance Volume (OBV)
-- **Risk Management**: Advanced risk metrics:
-  - Value at Risk (VaR)
-  - Conditional Value at Risk (CVaR)
-  - Maximum drawdown
-  - Sharpe, Sortino, and Calmar ratios
-- **MLflow Integration**: Track experiments, parameters, metrics, and artifacts.
-- **Configuration Management**: Centralized configuration using YAML/JSON files and environment variables.
-- **Visualization Dashboard**: Interactive Dash application for data visualization and model management.
-- **Event-Driven Architecture**: Lightweight event dispatcher for inter-module communication.
-- **Structured Logging**: Advanced logging with Loguru, including remote logging capabilities.
-- **Scheduled Updates**: Daily data updates using APScheduler.
-- **Workflow Orchestration**: Flexible workflow management with step-based execution.
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/marketsage.git
-cd marketsage
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-### Basic Usage
-
-Run the main script with default settings:
-
-```bash
-python main.py
-```
-
-### Advanced Usage
-
-Run with specific stock symbols and date range:
-
-```bash
-python main.py --symbols AAPL,MSFT,GOOG --start-date 2021-01-01
-```
-
-Use a specific storage backend:
-
-```bash
-python main.py --storage-backend sqlite
-```
-
-Enable additional features:
-
-```bash
-python main.py --indicators --risk-metrics
-```
-
-Run with scheduler for periodic updates:
-
-```bash
-python main.py --run-scheduler
-```
-
-### Workflow Example
-
-Run the workflow example:
-
-```bash
-python examples/workflow_example.py --calculate-indicators --optimize-models
-```
-
-## Configuration
-
-The project uses a centralized configuration system. You can modify the default configuration in `config/default_config.yaml` or provide your own configuration file:
-
-```bash
-python main.py --config my_config.yaml
-```
-
-You can also override configuration with environment variables:
-
-```bash
-MARKETSAGE_STORAGE_BACKEND=sqlite python main.py
-```
-
-### Connection Configuration
-
-Database and service connection strings are centralized in the configuration file under the `connections` section:
-
-```yaml
-connections:
-  # InfluxDB configuration
-  influxdb:
-    url: http://localhost:8086
-    token: marketsagetoken
-    org: marketsage
-    bucket: stock_data
-  
-  # MLflow configuration
-  mlflow:
-    tracking_uri: http://localhost:5000
-    experiment_name: marketsage
-    artifact_dir: mlruns
-```
-
-These connection settings can be accessed programmatically using the `connection_config` module:
-
-```python
-from modules.connection_config import get_influxdb_config, get_mlflow_config
-
-influxdb_config = get_influxdb_config()
-mlflow_config = get_mlflow_config()
-```
+- **Stock Data Management**: Fetch, store, and retrieve stock data
+- **Predictions**: Generate predictions using various models and timeframes
+- **Scheduling**: Schedule data refresh and prediction tasks
+- **Authentication**: Secure user authentication and authorization
+- **Portfolio Management**: Manage stock portfolios and positions
+- **Alerts**: Set up and receive alerts based on various conditions
 
 ## Project Structure
 
 ```
-marketsage/
-├── config/                  # Configuration files
-├── data/                    # Data storage directory
-├── docker/                  # Docker configuration
-├── docs/                    # Documentation
-├── examples/                # Example scripts
-├── modules/                 # Core modules
-│   ├── storage_backends/    # Storage backend implementations
-│   ├── backtesting.py       # Backtesting module
-│   ├── config_manager.py    # Configuration management
-│   ├── connection_config.py # Connection configuration utility
-│   ├── data_acquisition.py  # Data acquisition module
-│   ├── event_dispatcher.py  # Event dispatcher
-│   ├── forecasting.py       # Forecasting module
-│   ├── indicators.py        # Technical indicators
-│   ├── logging_manager.py   # Logging management
-│   ├── mlflow_integration.py # MLflow integration
-│   ├── scheduler.py         # Scheduler for periodic tasks
-│   ├── stock_manager.py     # Stock management
-│   ├── storage.py           # Storage abstraction
-│   └── workflow_manager.py  # Workflow orchestration
-├── scripts/                 # Deployment scripts
-├── assets/                  # Dashboard assets
-├── dash_app.py              # Dash visualization application
-├── migrate_to_influxdb.py   # Data migration script
-├── main.py                  # Main entry point
-└── requirements.txt         # Dependencies
+stockscan/
+├── api/                   # API code
+│   ├── core/              # Core modules
+│   ├── db/                # Database models and utilities
+│   ├── models/            # Pydantic models
+│   ├── routers/           # API endpoints
+│   ├── schemas/           # Request/response schemas
+│   ├── services/          # Business logic
+│   └── utils/             # Utility functions
+├── alembic/               # Database migrations
+├── docker/                # Docker configuration
+├── examples/              # Example code
+├── modules/               # Existing StockScan modules
+├── tests/                 # Test code
+├── .env                   # Environment variables
+├── alembic.ini            # Alembic configuration
+├── docker-compose.yml     # Docker Compose configuration
+├── requirements.txt       # Python dependencies
+├── run_api.py             # API runner script
+├── run_dev.py             # Development runner script
+└── setup.py               # Setup script
 ```
 
-## MLflow Integration
+## Getting Started
 
-The project integrates with MLflow for experiment tracking. To view the MLflow UI:
+### Prerequisites
+
+- Python 3.8+
+- PostgreSQL
+- Redis (for caching)
+- InfluxDB (for time series data)
+
+### Installation
+
+1. Clone the repository:
 
 ```bash
-mlflow ui
+git clone <repository-url>
+cd stockscan
 ```
 
-Then open your browser at http://localhost:5000
-
-## Visualization Dashboard
-
-The project includes an interactive Dash application for data visualization and model management:
+2. Create a virtual environment:
 
 ```bash
-python dash_app.py
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-Then open your browser at http://localhost:8050
-
-## Deployment Options
-
-### Docker Deployment
-
-You can deploy the middleware components (InfluxDB, PostgreSQL, MLflow) and the Dash application separately:
+3. Install dependencies:
 
 ```bash
-# Deploy middleware components
-./scripts/deploy_middleware_docker.sh
-
-# Deploy Dash application
-./scripts/deploy_dash_docker.sh
+pip install -r requirements.txt
 ```
 
-### Standalone Deployment
+4. Configure environment variables:
 
-You can deploy the Dash application as a standalone Python application:
+Copy the `.env.example` file to `.env` and update the values:
 
 ```bash
-./scripts/deploy_dash_standalone.sh
+cp .env.example .env
 ```
 
-### Systemd Service Deployment
-
-You can deploy the Dash application as a systemd service on Linux:
+5. Run the setup script:
 
 ```bash
-sudo ./scripts/install_systemd_service.sh
+python setup.py
 ```
 
-### Cloud Deployment
+### Running the API
 
-You can deploy the Dash application to Azure:
+#### Development Mode
 
 ```bash
-# Prepare deployment package
-./scripts/cloud/azure/prepare_deployment.sh
-
-# Deploy to Azure App Service
-./scripts/cloud/azure/deploy_app_service.sh
-
-# Or deploy to Azure Container Apps
-./scripts/cloud/azure/deploy_container_app.sh
+python run_dev.py
 ```
 
-See the [scripts/README.md](scripts/README.md) file for more details on deployment options.
+#### Production Mode
 
-## Contributing
+```bash
+python run_api.py
+```
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+### Using Docker
+
+```bash
+docker-compose up -d
+```
+
+## API Documentation
+
+Once the API is running, you can access the interactive API documentation at:
+
+- Swagger UI: `http://localhost:8000/api/docs`
+- ReDoc: `http://localhost:8000/api/redoc`
+
+## Development
+
+### Running Tests
+
+```bash
+pytest
+```
+
+### Database Migrations
+
+To create a new migration:
+
+```bash
+alembic revision --autogenerate -m "Description of changes"
+```
+
+To apply migrations:
+
+```bash
+alembic upgrade head
+```
+
+## Example Client
+
+An example client is provided in `examples/api_client_example.py`. You can run it with:
+
+```bash
+python examples/api_client_example.py
+```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+[MIT License](LICENSE)

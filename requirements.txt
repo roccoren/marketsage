@@ -1,61 +1,37 @@
-# Core dependencies - Updated versions for Python 3.12 compatibility
-pandas==2.2.1
-numpy==1.26.4
-matplotlib==3.8.3
-yfinance==0.2.37
-scikit-learn==1.3.2  # For forecasting models
-#pyqlib==0.9.0  # Microsoft Quantitative Library
-catboost==1.2.8  # For CatBoost models
-xgboost==2.0.2  # For XGBoost models
-torch==2.2.0  # For PyTorch models
-torchvision==0.17.0  # For PyTorch visualization utilities
-seaborn==0.13.2  # For statistical data visualization
-lightgbm==4.1.0  # For LightGBM models
+# API Framework
+fastapi>=0.95.0
+uvicorn>=0.22.0
+pydantic>=2.0.0
+pydantic_settings>=2.0.0
+email-validator>=2.0.0
 
-# Storage
-sqlalchemy==2.0.23  # For database operations
-pyyaml==6.0.1  # For YAML configuration files
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.5
 
-# MLflow for experiment tracking
-mlflow==2.8.1
-psycopg2-binary==2.9.9  # For PostgreSQL connection
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.5
+alembic>=1.10.0
 
-# Dashboard and visualization
-streamlit==1.30.0  # For interactive dashboard
-plotly==5.18.0  # For interactive charts
-altair==5.1.2  # For declarative visualizations
-dash==2.14.2  # For Dash web application
-dash-bootstrap-components==1.5.0  # For Bootstrap components in Dash
+# Caching
+redis>=4.5.0
 
-# Scheduling and async processing
-apscheduler==3.10.4  # For scheduled data updates
-# asyncio is now part of the standard library, no need to install separately
+# Scheduling
+apscheduler>=3.10.0
 
-# Logging and error handling
-loguru==0.7.2  # For structured logging
+# Storage backends (reusing existing modules)
+influxdb-client>=1.36.0
+pandas>=1.5.0
+numpy>=1.23.0
 
-# Configuration and event management
-pydantic==2.5.2  # For data validation
-
-# Optional: Terminal output enhancements
-colorama==0.4.6  # Optional: For cross-platform colored terminal output
-
-# Time series database integration
-influxdb-client==1.36.1  # InfluxDB 2.x client
-# questdb==1.1.0  # Uncomment if using QuestDB
-# timescaledb==0.1.0  # Uncomment if using TimescaleDB
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0
+httpx>=0.24.0
+jinja2>=3.1.2
 
 # Testing
-pytest==7.3.1
-pytest-cov==4.1.0
-pytest-asyncio==0.23.2  # For testing async code
-
-# Development tools
-black==23.11.0  # Code formatting
-isort==5.12.0  # Import sorting
-flake8==6.1.0  # Linting
-mypy==1.7.1  # Type checking
-
-# Deployment tools
-gunicorn==21.2.0  # WSGI HTTP Server for deploying Dash in production
-tqdm==4.66.1  # Progress bars for data migration
+pytest>=7.3.0
+pytest-asyncio>=0.21.0
