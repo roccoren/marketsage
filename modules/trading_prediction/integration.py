@@ -168,12 +168,15 @@ class TradingPredictionIntegrator:
             logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
             return None
     
-    def generate_prediction(self, data: pd.DataFrame) -> Dict[str, Any]:
+    def generate_prediction(self, data: pd.DataFrame, log_to_mlflow: bool = False,
+                           mlflow_tags: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Generate prediction for the given data.
+        Generate prediction for the given data and optionally log to MLflow.
         
         Args:
             data: DataFrame with OHLCV data
+            log_to_mlflow: Whether to log the prediction to MLflow
+            mlflow_tags: Optional tags to add to the MLflow run
             
         Returns:
             Dictionary with prediction results
@@ -262,9 +265,36 @@ class TradingPredictionIntegrator:
                 'confidence': confidence,
                 'daily_actions': daily_actions
             }
-            
             logger.info(f"[DEBUG] Generated prediction result: {result}")
+            
+            # Log to MLflow if requested
+            if log_to_mlflow:
+                try:
+                    from modules.mlflow_integration import MLflowManager
+                    symbol = data.name if hasattr(data, 'name') else 'unknown'
+                    
+                    mlflow_manager = MLflowManager()
+                    run_name = f"prediction_{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    mlflow_manager.start_run(run_name)
+                    
+                    # Log prediction result
+                    mlflow_manager.log_prediction_result(symbol, result, data, mlflow_tags)
+                    
+                    # Add run ID to result
+                    import mlflow
+                    result['mlflow_run_id'] = mlflow.active_run().info.run_id if mlflow.active_run() else None
+                    
+                    # End the run
+                    mlflow_manager.end_run()
+                    logger.info(f"[DEBUG] Logged prediction to MLflow with run ID: {result.get('mlflow_run_id')}")
+                    
+                except Exception as e:
+                    logger.error(f"[DEBUG] Error logging prediction to MLflow: {e}")
+                    import traceback
+                    logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            
             return result
+            
             
         except Exception as e:
             logger.error(f"[DEBUG] Error generating prediction: {e}")
@@ -512,7 +542,8 @@ class TradingPredictionIntegrator:
             }
 
 
-def get_trading_prediction(symbol: str, data: pd.DataFrame, model_path: Optional[str] = None) -> Dict[str, Any]:
+def get_trading_prediction(symbol: str, data: pd.DataFrame, model_path: Optional[str] = None,
+                         log_to_mlflow: bool = False, mlflow_tags: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """
     Get trading prediction for a symbol using the LSTM model.
     
@@ -520,6 +551,8 @@ def get_trading_prediction(symbol: str, data: pd.DataFrame, model_path: Optional
         symbol: Stock symbol
         data: DataFrame with OHLCV data
         model_path: Path to the trained model (optional)
+        log_to_mlflow: Whether to log the prediction to MLflow
+        mlflow_tags: Optional tags to add to the MLflow run
         
     Returns:
         Dictionary with prediction results
@@ -539,6 +572,6 @@ def get_trading_prediction(symbol: str, data: pd.DataFrame, model_path: Optional
             data[col] = 0.0
     
     integrator = TradingPredictionIntegrator(model_path)
-    result = integrator.generate_prediction(data)
+    result = integrator.generate_prediction(data, log_to_mlflow=log_to_mlflow, mlflow_tags=mlflow_tags)
     logger.info(f"[DEBUG] Returning prediction result for {symbol}")
     return result

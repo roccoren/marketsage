@@ -186,6 +186,133 @@ class MLflowManager:
         mlflow.log_artifact(temp_path, artifact_path)
         os.remove(temp_path)
 
+    def _create_prediction_visualization(self, prediction_data, actual_data):
+        """
+        Create visualization comparing predicted vs actual stock movements.
+        
+        Args:
+            prediction_data (dict): Prediction results
+            actual_data (pd.DataFrame): Actual stock data
+            
+        Returns:
+            matplotlib.figure.Figure: Figure with visualization
+        """
+        # Create a new figure
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Plot historical prices
+        ax.plot(actual_data.index, actual_data['Close'], label='Historical Price', color='blue')
+        
+        # Calculate prediction dates and prices
+        last_date = actual_data.index[-1]
+        last_price = actual_data['Close'].iloc[-1]
+        forecast_dates = [last_date + timedelta(days=i) for i in range(1, 6)]
+        
+        # Calculate forecast change
+        forecast_change = prediction_data['forecast_change_percent'] / 100
+        
+        # Create a simple linear path from last price to predicted price
+        predicted_prices = [last_price]
+        for i in range(1, 6):
+            step_change = last_price * (forecast_change * i / 5)
+            predicted_prices.append(last_price + step_change)
+        
+        # Plot prediction line
+        ax.plot([last_date] + forecast_dates, predicted_prices,
+                label='Prediction', color='red', linestyle='--')
+        
+        # Add confidence interval based on volatility
+        volatility = prediction_data.get('volatility', 0.5)
+        upper_bound = [price * (1 + volatility) for price in predicted_prices]
+        lower_bound = [price * (1 - volatility) for price in predicted_prices]
+        
+        ax.fill_between([last_date] + forecast_dates, lower_bound, upper_bound,
+                        color='red', alpha=0.2, label='Confidence Interval')
+        
+        # Add action markers
+        daily_actions = prediction_data.get('daily_actions', [])
+        for i, action in enumerate(daily_actions):
+            if action.lower() == 'buy':
+                ax.scatter(forecast_dates[i], predicted_prices[i+1],
+                          marker='^', color='green', s=100, label='Buy Signal')
+            elif action.lower() == 'sell':
+                ax.scatter(forecast_dates[i], predicted_prices[i+1],
+                          marker='v', color='red', s=100, label='Sell Signal')
+        
+        # Add title and labels
+        symbol = actual_data.name if hasattr(actual_data, 'name') else 'Stock'
+        ax.set_title(f"{symbol} Price Prediction")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Price")
+        
+        # Add overall action and confidence as text
+        action = prediction_data.get('overall_action', 'Unknown')
+        confidence = prediction_data.get('confidence', 0)
+        change_percent = prediction_data.get('forecast_change_percent', 0)
+        
+        text = f"Action: {action} (Confidence: {confidence:.2f})\nForecast Change: {change_percent:.2f}%"
+        ax.text(0.02, 0.95, text, transform=ax.transAxes,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Add legend (handles duplicates)
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1, 1))
+        
+        plt.tight_layout()
+        return fig
+
+    def log_prediction_result(self, symbol, prediction_data, actual_data=None, tags=None):
+        """
+        Log prediction results to MLflow.
+        
+        Args:
+            symbol (str): Stock symbol
+            prediction_data (dict): Prediction results from TradingPredictionIntegrator
+            actual_data (pd.DataFrame, optional): Actual stock data for comparison
+            tags (dict, optional): Additional tags for the run
+        """
+        try:
+            # Log parameters
+            params = {
+                "symbol": symbol,
+                "prediction_date": datetime.now().strftime('%Y-%m-%d'),
+                "prediction_type": prediction_data.get('overall_action', 'Unknown')
+            }
+            self.log_parameters(params)
+            
+            # Log metrics
+            metrics = {
+                "confidence": prediction_data.get('confidence', 0),
+                "forecast_change_percent": prediction_data.get('forecast_change_percent', 0),
+                "trend": prediction_data.get('trend', 0),
+                "volatility": prediction_data.get('volatility', 0)
+            }
+            self.log_metrics(metrics)
+            
+            # Create and log visualization
+            if actual_data is not None:
+                fig = self._create_prediction_visualization(prediction_data, actual_data)
+                self.log_figure(fig, "prediction_visualization")
+                plt.close(fig)
+            
+            # Log prediction data as JSON
+            prediction_path = f"prediction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(prediction_path, "w") as f:
+                json.dump(prediction_data, f)
+            self.log_artifact(prediction_path)
+            os.remove(prediction_path)
+            
+            # Add tags if provided
+            if tags:
+                for key, value in tags.items():
+                    mlflow.set_tag(key, value)
+            
+            logger.info(f"Successfully logged prediction result for {symbol} to MLflow")
+        except Exception as e:
+            logger.error(f"Error logging prediction result: {e}")
+            raise
+
     def log_trading_signals(self, signals_df):
         """
         Log trading signals to MLflow.

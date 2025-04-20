@@ -1,208 +1,133 @@
-# Default configuration for MarketSage quantitative analysis project
-
-# MarketSage configuration
-marketsage:
-  provider_uri: "data/marketsage_data"  # Local data directory
-  region: "us"  # Market region (us, cn, etc.)
-  logging_level: INFO
-  feature_cache:
-    enabled: true
-    path: "data/feature_cache"
-  expression_cache:
-    enabled: true
-    path: "data/expression_cache"
-
-# Storage configuration
-storage:
-  # Default storage backend (csv, sqlite, tsdb)
-  backend: csv
-  
-  # CSV storage configuration
-  csv:
-    data_dir: data/csv
-  
-  # SQLite storage configuration
-  sqlite:
-    db_path: data/sqlite/stocks.db
-  
-  # Time-series database configuration
-  tsdb:
-    connection_string: ""
-    fallback_dir: data/tsdb_fallback
-
-# Data acquisition configuration
-data_acquisition:
-  # Default start date for historical data
-  start_date: "2020-01-01"
-  
-  # Retry configuration
-  retry_count: 3
-  retry_delay: 5
-  
-  # Data update schedule (cron format)
-  update_schedule: "0 0 * * *"  # Daily at midnight
-
-# Forecasting configuration
-forecasting:
-  # Default forecast horizon (days)
-  horizon: 10
-  
-  # MarketSage model configuration
-  models:
-    lgb:
-      num_boost_round: 100
-      learning_rate: 0.1
-      max_depth: 5
-      feature_fraction: 0.8
-      subsample: 0.8
-      
-    lstm:
-      num_layers: 2
-      hidden_size: 64
-      dropout: 0.1
-      batch_size: 32
-      epochs: 100
-  
-  # Feature engineering
-  features:
-    # Basic price features
-    price: ['$close', '$open', '$high', '$low', '$volume']
-    # Technical indicators
-    technical: [
-      'RSI($close, 14)',
-      'MACD($close)',
-      'MA($close, 5)',
-      'MA($close, 20)',
-      'STD($close, 20)',
-      'BBand($close, 20, 2)'
-    ]
-    # Advanced features
-    advanced: [
-      'ROC($close, 5)',
-      'BETA($close, $benchmark, 20)',
-      'MOMENTUM($close, 20)',
-      'VOLCORR($close, $volume, 20)'
-    ]
-  
-  # Action thresholds
-  thresholds:
-    strong_buy: 1.0
-    buy: 0.5
-    sell: -0.5
-    strong_sell: -1.0
-
-# Backtesting configuration
+async:
+  max_concurrent_tasks: 5
+  max_threads: 10
 backtesting:
-  # MarketSage backtest configuration
-  executor:
-    type: "SimulatorExecutor"
-    configs:
-      trade_unit: 100
-      limit_threshold: 0.095
-      deal_price: "close"
-      commission: 0.001
-      tax: 0.001
-      slippage: 0.001
-  
-  # Strategy settings
-  strategy:
-    type: "TopkDropoutStrategy"
-    configs:
-      model: null  # Will be set dynamically
-      dataset: null  # Will be set dynamically
-      topk: 50
-      n_drop: 5
-      signal: "prediction"
-  
-  # Performance evaluation
   evaluation:
-    metrics: [
-      "excess_return_with_cost",
-      "excess_return_without_cost",
-      "max_drawdown",
-      "information_ratio",
-      "alpha",
-      "beta",
-      "sharpe",
-      "annual_return"
-    ]
+    metrics:
+    - excess_return_with_cost
+    - excess_return_without_cost
+    - max_drawdown
+    - information_ratio
+    - alpha
+    - beta
+    - sharpe
+    - annual_return
     min_trades: 10
     risk_free_rate: 0.02
-
-# MLflow configuration
-mlflow:
-  # Experiment name
-  experiment_name: marketsage
-  
-  # Tracking URI (empty for local)
-  tracking_uri: ""
-  
-  # Artifact directory
-  artifact_dir: mlruns
-
-# Logging configuration
-logging:
-  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  level: INFO
-  
-  # Log file
-  file: logs/marketsage.log
-  
-  # Maximum log file size in bytes
-  max_size: 10485760  # 10 MB
-  
-  # Number of backup log files
-  backup_count: 5
-  
-  # Enable console logging
-  console: true
-  
-  # Enable remote logging
-  remote:
-    enabled: false
-    host: ""
-    port: 0
-
-# Error handling configuration
+  executor:
+    configs:
+      commission: 0.001
+      deal_price: close
+      limit_threshold: 0.095
+      slippage: 0.001
+      tax: 0.001
+      trade_unit: 100
+    type: SimulatorExecutor
+  strategy:
+    configs:
+      dataset: null
+      model: null
+      n_drop: 5
+      signal: prediction
+      topk: 50
+    type: TopkDropoutStrategy
+connections:
+  influxdb:
+    bucket: stock_data
+    org: stockscan
+    token: stockscantoken
+    url: http://128.85.51.203:8086
+  mlflow:
+    artifact_dir: mlruns
+    experiment_name: 0420-prediction
+    tracking_uri: http://128.85.51.203:5000
+data_acquisition:
+  retry_count: 3
+  retry_delay: 5
+  start_date: '2020-01-01'
+  update_schedule: 0 0 * * *
 error_handling:
-  # Enable email notifications
   email_notifications:
     enabled: false
-    smtp_server: ""
-    smtp_port: 587
-    sender: ""
     recipients: []
-    subject_prefix: "[MARKETSAGE ERROR]"
-
-# Asynchronous processing configuration
-async:
-  # Maximum number of threads in thread pool
-  max_threads: 10
-  
-  # Maximum number of concurrent tasks
-  max_concurrent_tasks: 5
-
-# Event dispatcher configuration
+    sender: ''
+    smtp_port: 587
+    smtp_server: ''
+    subject_prefix: '[MARKETSAGE ERROR]'
 events:
-  # Enable event dispatcher
   enabled: true
-  
-  # Event handlers
   handlers:
     log_events: true
     store_events: false
-
-# Database and service connections
-connections:
-  # InfluxDB configuration
-  influxdb:
-    url: http://128.85.51.203:8086
-    token: stockscantoken
-    org: stockscan
-    bucket: stock_data
-  
-  # MLflow configuration
-  mlflow:
-    tracking_uri: http://128.85.51.203:5000
-    experiment_name: marketsage
-    artifact_dir: mlruns
+forecasting:
+  features:
+    advanced:
+    - ROC($close, 5)
+    - BETA($close, $benchmark, 20)
+    - MOMENTUM($close, 20)
+    - VOLCORR($close, $volume, 20)
+    price:
+    - $close
+    - $open
+    - $high
+    - $low
+    - $volume
+    technical:
+    - RSI($close, 14)
+    - MACD($close)
+    - MA($close, 5)
+    - MA($close, 20)
+    - STD($close, 20)
+    - BBand($close, 20, 2)
+  horizon: 10
+  models:
+    lgb:
+      feature_fraction: 0.8
+      learning_rate: 0.1
+      max_depth: 5
+      num_boost_round: 100
+      subsample: 0.8
+    lstm:
+      batch_size: 32
+      dropout: 0.1
+      epochs: 100
+      hidden_size: 64
+      num_layers: 2
+  thresholds:
+    buy: 0.5
+    sell: -0.5
+    strong_buy: 1.0
+    strong_sell: -1.0
+logging:
+  backup_count: 5
+  console: true
+  file: logs/marketsage.log
+  level: INFO
+  max_size: 10485760
+  remote:
+    enabled: false
+    host: ''
+    port: 0
+marketsage:
+  expression_cache:
+    enabled: true
+    path: data/expression_cache
+  feature_cache:
+    enabled: true
+    path: data/feature_cache
+  logging_level: INFO
+  provider_uri: data/marketsage_data
+  region: us
+mlflow:
+  artifact_dir: mlruns
+  experiment_name: marketsage
+  tracking_uri: ''
+storage:
+  backend: csv
+  csv:
+    data_dir: data/csv
+  sqlite:
+    db_path: data/sqlite/stocks.db
+  tsdb:
+    connection_string: ''
+    fallback_dir: data/tsdb_fallback
