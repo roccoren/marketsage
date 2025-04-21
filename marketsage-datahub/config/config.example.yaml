@@ -1,0 +1,116 @@
+# MarketSage DataHub Configuration Example
+
+# Logging configuration
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: logs/datahub.log
+  max_size: 10485760  # 10MB
+  backup_count: 5
+
+# Data acquisition settings
+acquisition:
+  # Default date range for historical data
+  default_start_date: "2020-01-01"
+  # Maximum number of concurrent download tasks
+  max_concurrent_downloads: 5
+  # Retry settings for data acquisition
+  retry:
+    max_attempts: 3
+    backoff_factor: 2
+    max_backoff: 60
+  # Data sources configuration
+  sources:
+    # Yahoo Finance configuration
+    yahoo:
+      enabled: true
+      rate_limit: 2000  # requests per hour
+    # Alpha Vantage configuration
+    alpha_vantage:
+      enabled: false
+      api_key: "YOUR_API_KEY"
+      rate_limit: 500  # requests per day
+    # Polygon.io configuration
+    polygon:
+      enabled: false
+      api_key: "YOUR_API_KEY"
+      rate_limit: 5  # requests per minute
+
+# Symbol management settings
+symbols:
+  # Path to local symbol list file
+  local_file: "data/symbols.csv"
+  # Automatic symbol list updates
+  auto_update: true
+  # Update frequency in days
+  update_frequency: 7
+  # Filter settings
+  filters:
+    min_market_cap: 100000000  # $100M
+    exchanges:
+      - NYSE
+      - NASDAQ
+      - AMEX
+
+# Storage configuration
+storage:
+  # InfluxDB configuration (via Time Series Data Service)
+  tsds:
+    enabled: true
+    grpc_host: "localhost"
+    grpc_port: 50051
+    timeout: 30  # seconds
+  
+  # Local cache settings
+  cache:
+    enabled: true
+    directory: "data/cache"
+    max_size: 1073741824  # 1GB
+    ttl: 86400  # 24 hours
+
+# RabbitMQ configuration
+rabbitmq:
+  host: "localhost"
+  port: 5672
+  username: "guest"
+  password: "guest"
+  virtual_host: "/"
+  # Exchange settings
+  exchanges:
+    data_exchange:
+      name: "data.exchange"
+      type: "topic"
+      durable: true
+    system_exchange:
+      name: "system.exchange"
+      type: "topic"
+      durable: true
+  # Queue settings
+  queues:
+    tasks:
+      name: "datahub.tasks"
+      durable: true
+      bindings:
+        - exchange: "data.exchange"
+          routing_key: "data.acquisition.*"
+        - exchange: "system.exchange"
+          routing_key: "system.config.*"
+
+# Preprocessing settings
+preprocessing:
+  # Default preprocessing steps
+  default_steps:
+    - remove_outliers
+    - fill_missing_values
+    - normalize
+  # Outlier detection settings
+  outlier_detection:
+    method: "z_score"
+    threshold: 3.0
+  # Missing value handling
+  missing_values:
+    method: "interpolate"
+    limit: 5
+  # Normalization settings
+  normalization:
+    method: "minmax"

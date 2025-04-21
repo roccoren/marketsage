@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: marketsage-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    environment:
+      - POSTGRES_SERVER=db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=marketsage
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+      - DATAHUB_URL=http://datahub:8001
+      - MARKETSAGE_CORE_URL=http://marketsage-core:8002
+      - TSDS_HOST=tsds
+      - TSDS_PORT=50051
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    networks:
+      - marketsage-network
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: marketsage-db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=marketsage
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - marketsage-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: marketsage-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - marketsage-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.11-management-alpine
+    container_name: marketsage-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - marketsage-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: marketsage-pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@marketsage.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - marketsage-network
+    depends_on:
+      - db
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
+  pgadmin-data:
+
+networks:
+  marketsage-network:
+    name: marketsage-network
+    external: true  # Assumes the network is created externally to connect all components

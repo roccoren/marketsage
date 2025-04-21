@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: marketsage-portal
+    ports:
+      - "3000:80"
+    environment:
+      - API_URL=http://marketsage-api:8000/api
+      - VITE_API_URL=http://localhost:8000/api
+      - VITE_AUTH_TOKEN_KEY=marketsage_auth_token
+      - VITE_REFRESH_TOKEN_KEY=marketsage_refresh_token
+    networks:
+      - marketsage-network
+    restart: unless-stopped
+    depends_on:
+      - marketsage-api
+
+  # Reference to the API service
+  marketsage-api:
+    image: marketsage-api:latest
+    container_name: marketsage-api-ref
+    networks:
+      - marketsage-network
+    profiles:
+      - dev-only # This service is only for development and won't be started by default
+
+networks:
+  marketsage-network:
+    name: marketsage-network
+    external: true  # Assumes the network is created externally to connect all components
